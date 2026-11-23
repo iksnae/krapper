@@ -48,10 +48,7 @@ def analyze_files(
         if language is None:
             continue
         source = file.read_text(encoding="utf-8", errors="replace")
-        try:
-            relative = file.relative_to(root).as_posix()
-        except ValueError:
-            relative = file.as_posix()
+        relative = _source_path(file, root)
         for function in functions_in_file(language, source, relative, str(root)):
             entries.append(make_entry(function, _coverage(bundle, function)))
     return sort_entries(entries)

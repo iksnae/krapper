@@ -130,8 +130,7 @@ def _file_modules(path: str, crate_name: str, crate_root: Path | None) -> list[s
         relative = file_path.relative_to(crate_root).as_posix()
     except ValueError:
         return [crate_name]
-    if relative.startswith("src/"):
-        relative = relative[4:]
+    relative = relative.removeprefix("src/")
     if relative in {"lib.rs", "main.rs"}:
         return [crate_name]
     return _with_crate(crate_name, _rs_parts(relative))
@@ -154,12 +153,14 @@ def _impl_owner(data: bytes, node):
     return _impl_type(data, owner)
 
 
+def _is_production_function(data: bytes, node) -> bool:
+    return (node.type == "function_item" and _has_block(node)
+            and getattr(node.parent, "type", None) != "block"
+            and not _in_mod_named(data, node, "tests"))
+
+
 def _record_function(data: bytes, node, modules: list[str], path: str) -> Function | None:
-    if node.type != "function_item" or not _has_block(node):
-        return None
-    if node.parent is not None and node.parent.type == "block":
-        return None
-    if _in_mod_named(data, node, "tests"):
+    if not _is_production_function(data, node):
         return None
     ident = child_of_type(node, "identifier")
     if ident is None:

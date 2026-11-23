@@ -44,11 +44,9 @@ def _skip(node) -> bool:
 
 def _strip_root(relative: str, source_root: str | None) -> str:
     root = (source_root or "").replace("\\", "/").rstrip("/")
-    if root and root != "." and relative.startswith(root + "/"):
+    if root not in {"", "."} and relative.startswith(root + "/"):
         return relative[len(root) + 1 :]
-    if relative.startswith("./"):
-        return relative[2:]
-    return relative
+    return relative.removeprefix("./")
 
 
 def _strip_src(relative: str) -> str:
@@ -114,11 +112,7 @@ def functions_in_source(
         ident = child_of_type(node, "identifier")
         if ident is None:
             continue
-        classes = _class_names(data, node)
-        if classes:
-            namespace = ".".join([module, *classes]) if module else ".".join(classes)
-        else:
-            namespace = module
+        namespace = ".".join(filter(None, [module, *_class_names(data, node)]))
         found.append(
             Function(
                 name=node_text(data, ident),

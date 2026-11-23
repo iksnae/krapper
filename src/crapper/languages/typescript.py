@@ -87,11 +87,9 @@ def _grammar(path: str) -> str:
 
 def _strip_root_prefix(relative: str, source_root: str | None) -> str:
     root = (source_root or "").replace("\\", "/").rstrip("/")
-    if root and root != "." and relative.startswith(root + "/"):
+    if root not in {"", "."} and relative.startswith(root + "/"):
         return relative[len(root) + 1 :]
-    if relative.startswith("./"):
-        return relative[2:]
-    return relative
+    return relative.removeprefix("./")
 
 
 def _strip_src_dir(relative: str) -> str:

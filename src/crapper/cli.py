@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import subprocess
 import math
 import time
@@ -110,75 +111,62 @@ class Options:
     allow_unverified_coverage: bool = False
 
 
-def _take(args: list[str], index: int, option: str) -> str:
-    if index + 1 >= len(args) or not args[index + 1] or args[index + 1].startswith("-"):
-        raise ValueError(f"{option} requires a value")
-    return args[index + 1]
+class _ArgumentParser(argparse.ArgumentParser):
+    def error(self, message):
+        raise ValueError(message)
+
+
+def _threshold(value: str) -> float:
+    number = float(value)
+    if not math.isfinite(number) or number < 0:
+        raise ValueError("--threshold must be finite and nonnegative")
+    return number
+
+
+def _option_value(value: str) -> str:
+    if not value or value.startswith("-"):
+        raise argparse.ArgumentTypeError("option requires a value")
+    return value
+
+
+def _root_path(value: str) -> Path:
+    return Path(_option_value(value))
+
+
+def _argument_parser():
+    parser = _ArgumentParser(add_help=False, allow_abbrev=False)
+    parser.add_argument("--root", dest="project_root", type=_root_path, default=Path("."))
+    parser.add_argument("-s", "--source-root", dest="source_roots", action="append", default=[], type=_option_value)
+    parser.add_argument("--coverage-command", type=_option_value)
+    parser.add_argument("--threshold", type=_threshold)
+    for flag in ("no-coverage", "use-existing-coverage", "allow-unverified-coverage", "changed"):
+        parser.add_argument("--" + flag, action="store_true")
+    parser.add_argument("positionals", nargs="*")
+    return parser
+
+
+def _validate_integrity_options(options: Options) -> None:
+    if options.allow_unverified_coverage and (options.threshold is not None or options.coverage_command):
+        raise ValueError("Unverified coverage cannot gate or record a run.")
+
+
+def _validate_coverage_options(options: Options) -> None:
+    if options.no_coverage and options.coverage_command:
+        raise ValueError("--no-coverage cannot be combined with --coverage-command")
 
 
 def parse_args(argv: list[str] | None = None) -> Options:
     args = list(sys.argv[1:] if argv is None else argv)
     if any(arg in {"-h", "--help"} for arg in args):
         return Options(action="help", message=HELP, exit_code=0)
-    options = Options(action="analyze")
-    index = 0
     try:
-        while index < len(args):
-            arg = args[index]
-            if arg in {"-s", "--source-root"}:
-                options.source_roots.append(_take(args, index, arg))
-                index += 2
-                continue
-            if arg == "--root":
-                options.project_root = Path(_take(args, index, arg))
-                index += 2
-                continue
-            if arg == "--coverage-command":
-                options.coverage_command = _take(args, index, arg)
-                index += 2
-                continue
-            if arg == "--threshold":
-                raw = _take(args, index, arg)
-                try:
-                    options.threshold = float(raw)
-                    if not math.isfinite(options.threshold) or options.threshold < 0:
-                        raise ValueError('threshold must be finite and nonnegative')
-                except ValueError as exc:
-                    raise ValueError("--threshold requires a number") from exc
-                index += 2
-                continue
-            if arg == "--no-coverage":
-                options.no_coverage = True
-                index += 1
-                continue
-            if arg == "--use-existing-coverage":
-                options.use_existing_coverage = True
-                index += 1
-                continue
-            if arg == "--allow-unverified-coverage":
-                options.allow_unverified_coverage = True
-                index += 1
-                continue
-            if arg == "--changed":
-                options.changed = True
-                index += 1
-                continue
-            if arg.startswith("-"):
-                raise ValueError(f"Unknown option: {arg}")
-            options.positionals.append(arg)
-            index += 1
+        parsed = _argument_parser().parse_intermixed_args(args)
+        options = Options(action="analyze", **vars(parsed))
+        _validate_integrity_options(options)
+        _validate_coverage_options(options)
+        return options
     except ValueError as exc:
         return Options(action="help", message=f"{exc}\n\n{HELP}", exit_code=1)
-    if options.allow_unverified_coverage and (options.threshold is not None or options.coverage_command):
-        return Options(action='help', message='Unverified coverage cannot gate or record a run.\n', exit_code=1)
-    if options.no_coverage and options.coverage_command:
-        return Options(
-            action="help",
-            message=f"--no-coverage cannot be combined with --coverage-command\n\n{HELP}",
-            exit_code=1,
-        )
-    return options
-
 
 class GitError(Exception):
     """git could not describe the working tree. `code` is git's status."""
@@ -198,35 +186,16 @@ def _git(root: Path, args: list[str]) -> subprocess.CompletedProcess[str]:
     )
 
 
-def _changed_files(root: Path) -> list[Path]:
-    """Added and modified files from git, including files in new directories.
+def _repository_root(root: Path) -> Path:
+    result = _git(root, ["rev-parse", "--show-toplevel"])
+    if result.returncode != 0:
+        raise GitError(result.returncode, result.stderr.strip() or "git status failed")
+    return Path(result.stdout.strip())
 
-    Paths come from `git status -z`, which does not quote non-ASCII names.
-    They are resolved from the repository root, then limited to `root`, so
-    `--root` can be a subdirectory. Deleted files are left out.
-    """
 
-    top_result = _git(root, ["rev-parse", "--show-toplevel"])
-    if top_result.returncode != 0:
-        raise GitError(top_result.returncode, top_result.stderr.strip() or "git status failed")
-    status = _git(
-        root,
-        [
-            "status",
-            "--porcelain",
-            "-z",
-            "--no-renames",
-            "--untracked-files=all",
-            "--",
-            ".",
-        ],
-    )
-    if status.returncode != 0:
-        raise GitError(status.returncode, status.stderr.strip() or "git status failed")
-    top = Path(top_result.stdout.strip())
-    limit = root.resolve()
+def _changed_paths(status: str, top: Path, limit: Path) -> list[Path]:
     found: list[Path] = []
-    for entry in status.stdout.split("\0"):
+    for entry in status.split("\0"):
         if len(entry) < 4:
             continue
         path = (top / entry[3:]).resolve()
@@ -234,6 +203,14 @@ def _changed_files(root: Path) -> list[Path]:
             found.append(path)
     return found
 
+
+def _changed_files(root: Path) -> list[Path]:
+    """Added/modified paths from NUL-delimited Git status, confined to root."""
+    top = _repository_root(root)
+    status = _git(root, ["status", "--porcelain", "-z", "--no-renames", "--untracked-files=all", "--", "."])
+    if status.returncode != 0:
+        raise GitError(status.returncode, status.stderr.strip() or "git status failed")
+    return _changed_paths(status.stdout, top, root.resolve())
 
 def _positionals(root: Path, args: list[str]) -> tuple[list[Path], list[str]]:
     existing: list[Path] = []
@@ -300,29 +277,41 @@ class CoverageCommandError(Exception):
     """An explicitly requested coverage command failed."""
 
 
+def _record_coverage(options: Options, root: Path, files: list[Path]) -> None:
+    invalidate(root)
+    before = inputs(root)
+    started = time.time_ns()
+    status = run_coverage(root, files, options.coverage_command)
+    if status != 0:
+        raise CoverageCommandError(f"Coverage command exited {status}; snapshot not updated.")
+    seal(root, before, started, options.coverage_command)
+
+
+def _require_internal_sources(root: Path, files: list[Path]) -> None:
+    if any(not path.resolve().is_relative_to(root) for path in files):
+        raise CoverageIntegrityError('Strict coverage sources must be inside --root.')
+
+
+def _require_bound_sources(root: Path, files: list[Path]) -> None:
+    bound = inputs(root)
+    if any(path.resolve().relative_to(root).as_posix() not in bound for path in files):
+        raise CoverageIntegrityError('Selected sources are excluded from receipt inputs.')
+
+
 def _coverage_bundle(options: Options, root: Path, files: list[Path]):
     if options.no_coverage:
         return None
-    if any(not path.resolve().is_relative_to(root) for path in files) and not options.allow_unverified_coverage:
-        raise CoverageIntegrityError('Strict coverage sources must be inside --root.')
     if options.coverage_command:
-        invalidate(root)
-        before = inputs(root)
-        started = time.time_ns()
-        status = run_coverage(root, files, options.coverage_command)
-        if status != 0:
-            raise CoverageCommandError(f"Coverage command exited {status}; snapshot not updated.")
-        seal(root, before, started, options.coverage_command)
+        _require_internal_sources(root, files)
+        _record_coverage(options, root, files)
     elif options.allow_unverified_coverage:
         print('WARNING: exploratory UNVERIFIED coverage; not valid gate evidence.', file=sys.stderr)
+        return load_bundle(root)
     else:
+        _require_internal_sources(root, files)
         verify(root)
-    if not options.allow_unverified_coverage:
-        bound = inputs(root)
-        if any(path.resolve().relative_to(root).as_posix() not in bound for path in files):
-            raise CoverageIntegrityError('Selected sources are excluded from receipt inputs.')
+    _require_bound_sources(root, files)
     return load_bundle(root)
-
 
 def _threshold_status(options: Options, entries) -> int:
     if options.threshold is None:
@@ -333,48 +322,48 @@ def _threshold_status(options: Options, entries) -> int:
     if any(entry.crap is None for entry in entries):
         print("Cannot evaluate CRAP threshold: coverage is unavailable for some entries.", file=sys.stderr)
         return 1
-    scored = [entry.crap for entry in entries if entry.crap is not None]
-    if scored and max(scored) > options.threshold:
+    worst = max(entry.crap for entry in entries)
+    if worst > options.threshold:
         print(
-            f"CRAP threshold exceeded: {max(scored):.1f} > {options.threshold:.1f}",
+            f"CRAP threshold exceeded: {worst:.1f} > {options.threshold:.1f}",
             file=sys.stderr,
         )
         return 2
     return 0
 
 
-def run(argv: list[str] | None = None) -> int:
-    options = parse_args(argv)
-    if options.action == "help":
-        return _show_help(options)
+def _analyze_selection(options: Options, root: Path, files: list[Path]):
+    bundle = _coverage_bundle(options, root, files)
+    entries = analyze_files(files, root, bundle)
+    if not options.no_coverage and not options.allow_unverified_coverage:
+        verify(root)
+    return entries
 
-    root = options.project_root.resolve()
-    try:
-        files = select_files(options)
-    except GitError as exc:
-        print(str(exc), file=sys.stderr)
-        return exc.code
+
+def _run_selection(options: Options, root: Path, files: list[Path]) -> int:
     if not files:
         print("No source files to analyze.")
         return 1 if options.threshold is not None or options.coverage_command else 0
-
-    try:
-        bundle = _coverage_bundle(options, root, files)
-    except (CoverageCommandError, CoverageIntegrityError, OSError, ValueError, KeyError, TypeError) as exc:
-        print(str(exc), file=sys.stderr)
-        return 1
-    entries = analyze_files(files, root, bundle)
-    if not options.no_coverage and not options.allow_unverified_coverage:
-        try:
-            verify(root)
-        except CoverageIntegrityError as exc:
-            print(str(exc), file=sys.stderr)
-            return 1
+    entries = _analyze_selection(options, root, files)
     metrics = write_metrics(entries, root)
     print(format_report(entries), end="", flush=True)
     print(f"Wrote {metrics}", file=sys.stderr)
     return _threshold_status(options, entries)
 
+
+def run(argv: list[str] | None = None) -> int:
+    options = parse_args(argv)
+    if options.action == "help":
+        return _show_help(options)
+    root = options.project_root.resolve()
+    try:
+        return _run_selection(options, root, select_files(options))
+    except GitError as exc:
+        print(str(exc), file=sys.stderr)
+        return exc.code
+    except (CoverageCommandError, CoverageIntegrityError, OSError, ValueError, KeyError, TypeError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
 
 def main(argv: list[str] | None = None) -> None:
     sys.exit(run(argv))

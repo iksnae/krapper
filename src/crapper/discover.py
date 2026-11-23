@@ -1,6 +1,7 @@
 """Find source files and decide which language each one is written in."""
 
 import os
+from fnmatch import fnmatchcase
 from pathlib import Path
 
 EXTENSIONS = {
@@ -82,17 +83,15 @@ def language_of(path: str | Path) -> str | None:
 def is_test_file(path: str | Path) -> bool:
     file_path = Path(path)
     name = file_path.name
-    if name.endswith(GO_TEST_SUFFIX):
-        return True
-    if name.endswith(CLOJURE_TEST_SUFFIXES):
-        return True
-    if name.endswith(JS_TEST_SUFFIXES):
-        return True
-    if name == "conftest.py":
-        return True
-    if name.endswith("_test.py") or (name.startswith("test_") and name.endswith(".py")):
+    suffixes = (GO_TEST_SUFFIX, *CLOJURE_TEST_SUFFIXES, *JS_TEST_SUFFIXES, "_test.py")
+    if name == "conftest.py" or name.endswith(suffixes) or fnmatchcase(name, "test_*.py"):
         return True
     return any(part in TEST_DIRS for part in file_path.parts)
+
+
+def _sources_in(directory: str, names: list[str]) -> list[Path]:
+    paths = (Path(directory) / name for name in names)
+    return [path for path in paths if language_of(path) is not None and not is_test_file(path)]
 
 
 def _walk(root: Path) -> list[Path]:
@@ -103,13 +102,9 @@ def _walk(root: Path) -> list[Path]:
     found: list[Path] = []
     for dirpath, dirnames, filenames in os.walk(root):
         dirnames[:] = [
-            name for name in dirnames if name not in SKIP_DIRS and name not in TEST_DIRS
+            name for name in dirnames if name not in SKIP_DIRS | TEST_DIRS
         ]
-        for name in filenames:
-            path = Path(dirpath) / name
-            if language_of(path) is None or is_test_file(path):
-                continue
-            found.append(path)
+        found.extend(_sources_in(dirpath, filenames))
     return found
 
 

@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from crapper.cli import GitError, _changed_files, _positionals, _take, main, parse_args, run
+from crapper.cli import GitError, _changed_files, _positionals, main, parse_args, run
 from crapper.discover import is_test_file, language_of
 
 
@@ -208,10 +208,8 @@ def test_run_asks_for_coverage_when_it_is_enabled(tmp_path, monkeypatch):
 
 
 def test_empty_option_value_is_rejected():
-    with pytest.raises(ValueError, match="requires a value"):
-        _take(["ok", "--opt", ""], 1, "--opt")
-    with pytest.raises(ValueError, match="requires a value"):
-        _take(["--opt", "-1"], 0, "--opt")
+    assert parse_args(["--coverage-command", ""]).exit_code == 1
+    assert parse_args(["--source-root", "-1"]).exit_code == 1
 
 
 def test_parse_args_reads_the_process_arguments_after_the_program(monkeypatch):
