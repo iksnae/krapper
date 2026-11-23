@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from crapper.analyze import analyze_files
-from crapper.coverage import CoverageBundle, load_bundle
+from crapper.coverage import load_bundle
 from crapper.discover import (
     CLOJURE_TEST_SUFFIXES,
     GO_TEST_SUFFIX,
@@ -59,7 +59,8 @@ Options:
   --use-existing-coverage       Read coverage already on disk (the default).
   --coverage-command <cmd>      Explicitly run this shell command, then read
                                 the reports it wrote (trusted projects only).
-  --threshold <number>          Exit 2 when the worst CRAP score is above this.
+  --threshold <number>          Exit 2 when a CRAP score is above this;
+                                exit 1 if any entry has unavailable coverage.
 
 Arguments:
   path              File or directory to analyze. Test paths are included when
@@ -285,6 +286,10 @@ def _show_help(options: Options) -> int:
     return options.exit_code
 
 
+class CoverageCommandError(Exception):
+    """An explicitly requested coverage command failed."""
+
+
 def _coverage_bundle(options: Options, root: Path, files: list[Path]):
     if options.no_coverage:
         return None
@@ -292,13 +297,16 @@ def _coverage_bundle(options: Options, root: Path, files: list[Path]):
         return load_bundle(root)
     status = run_coverage(root, files, options.coverage_command)
     if options.coverage_command and status not in (0, None):
-        return CoverageBundle()
+        raise CoverageCommandError(f"Coverage command exited {status}; snapshot not updated.")
     return load_bundle(root)
 
 
 def _threshold_status(options: Options, entries) -> int:
     if options.threshold is None:
         return 0
+    if any(entry.crap is None for entry in entries):
+        print("Cannot evaluate CRAP threshold: coverage is unavailable for some entries.", file=sys.stderr)
+        return 1
     scored = [entry.crap for entry in entries if entry.crap is not None]
     if scored and max(scored) > options.threshold:
         print(
@@ -324,7 +332,12 @@ def run(argv: list[str] | None = None) -> int:
         print("No source files to analyze.")
         return 0
 
-    entries = analyze_files(files, root, _coverage_bundle(options, root, files))
+    try:
+        bundle = _coverage_bundle(options, root, files)
+    except CoverageCommandError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    entries = analyze_files(files, root, bundle)
     metrics = write_metrics(entries, root)
     print(format_report(entries), end="", flush=True)
     print(f"Wrote {metrics}", file=sys.stderr)

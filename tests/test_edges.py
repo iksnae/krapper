@@ -56,10 +56,10 @@ def test_suffix_match_rejects_a_longer_suffix():
     assert suffix_match("src/demo/core.clj", "") is False
 
 
-def test_coverage_percent_is_zero_when_there_is_nothing_to_count():
+def test_empty_measurements_are_unavailable():
     assert coverage_percent(0, 0) == 0.0
-    assert percent_for_range({}, 1, 3) == 0.0
-    assert percent_for_range({1: (1, 1)}, 4, 5) == 0.0
+    assert percent_for_range({}, 1, 3) is None
+    assert percent_for_range({1: (1, 1)}, 4, 5) is None
 
 
 def test_form_coverage_ignores_a_span_with_no_forms():
@@ -78,9 +78,9 @@ def test_go_profile_rejects_a_broken_line():
         parse_go_profile("mode: set\nnot a segment\n")
 
 
-def test_go_percent_is_zero_when_no_segment_overlaps_the_function():
+def test_go_percent_is_unavailable_when_no_segment_overlaps_the_function():
     profile = parse_go_profile("mode: set\nboard.go:1.1,2.2 1 1\n")
-    assert go_percent(profile, "board.go", 10, 12) == 0.0
+    assert go_percent(profile, "board.go", 10, 12) is None
 
 
 def test_go_percent_does_not_accept_the_first_unrelated_file():
@@ -208,7 +208,7 @@ def test_conftest_and_a_tests_directory_are_tests(tmp_path):
     assert iter_source_files([source]) == [source.resolve()]
 
 
-def test_missing_coverage_scores_zero_and_sorts_ahead_of_a_covered_function(tmp_path):
+def test_missing_coverage_is_unscored_and_sorts_after_a_covered_function(tmp_path):
     low = tmp_path / "src" / "low.ts"
     high = tmp_path / "src" / "high.ts"
     low.parent.mkdir(parents=True)
@@ -218,8 +218,8 @@ def test_missing_coverage_scores_zero_and_sorts_ahead_of_a_covered_function(tmp_
     bundle = CoverageBundle(lcov={"src/low.ts": {1: (1, 1), 2: (1, 1), 3: (1, 1)}})
     entries = analyze_files([low, high], tmp_path, bundle)
     assert [(entry.name, entry.coverage, entry.crap) for entry in entries] == [
-        ("high", 0.0, 6.0),
         ("low", 100.0, 2.0),
+        ("high", None, None),
     ]
     unscored = analyze_files([high], tmp_path, None)
     assert unscored[0].coverage is None
@@ -334,8 +334,8 @@ def test_analyze_does_not_give_a_short_path_the_longer_files_coverage(tmp_path):
     )
     entries = analyze_files([short, long], tmp_path, bundle)
     assert [(entry.name, entry.path, entry.coverage) for entry in entries] == [
-        ("Place", "b/main.go", 0.0),
         ("Place", "a/b/main.go", 100.0),
+        ("Place", "b/main.go", None),
     ]
 
 

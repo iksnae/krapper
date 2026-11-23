@@ -47,7 +47,7 @@ SKIP_DIRS = {
     ".clj-kondo",
 }
 
-TEST_DIRS = {"Tests", "test", "tests", "spec", "specs", "__tests__"}
+TEST_DIRS = {"SwiftTests", "Tests", "test", "tests", "spec", "specs", "__tests__"}
 
 GO_TEST_SUFFIX = "_test.go"
 CLOJURE_TEST_SUFFIXES = ("_test.clj", "_test.cljc", "_test.cljs", "_test.bb")

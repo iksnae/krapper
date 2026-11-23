@@ -307,7 +307,7 @@ def test_threshold_equal_to_the_score_is_allowed(tmp_path):
 
 def test_threshold_with_no_scores_does_not_call_max_on_an_empty_list(tmp_path):
     _write(tmp_path, "src/demo/core.clj", "(ns demo.core)\n\n(defn choose [] 1)\n")
-    assert run(["--root", str(tmp_path), "--no-coverage", "--threshold", "1"]) == 0
+    assert run(["--root", str(tmp_path), "--no-coverage", "--threshold", "1"]) == 1
 
 
 def test_a_failed_coverage_command_ignores_a_stale_report(tmp_path, monkeypatch):
@@ -319,10 +319,8 @@ def test_a_failed_coverage_command_ignores_a_stale_report(tmp_path, monkeypatch)
     code = run(
         ["--root", str(tmp_path), "--coverage-command", "exit 3", "src/demo/core.clj"]
     )
-    assert code == 0
-    text = (tmp_path / ".metrics" / "crap.edn").read_text(encoding="utf-8")
-    assert ":coverage 0.0" in text
-    assert ":crap 6.0" in text
+    assert code == 1
+    assert not (tmp_path / ".metrics" / "crap.edn").exists()
 
     monkeypatch.setattr("crapper.cli.run_coverage", lambda *_args, **_kwargs: 0)
     assert run(

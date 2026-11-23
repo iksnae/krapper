@@ -13,17 +13,16 @@ from crapper.model import Entry, Function
 def _coverage(bundle: CoverageBundle | None, function: Function) -> float | None:
     """Percentage for one function.
 
-    None means coverage was not requested (`--no-coverage`). A function the
-    report does not mention scores 0%, so it sorts with the other scores
-    instead of sinking to the bottom as N/A.
+    None means coverage was not requested or no measurement is available.
+    Measured zero stays numeric; missing data must never invent a CRAP score.
     """
 
     if bundle is None:
         return None
     found = bundle.percent_for(function)
     if found is None:
-        print(f"No coverage data: {function.path}:{function.start_line}; scoring 0%.", file=sys.stderr)
-        return 0.0
+        print(f"Coverage unavailable: {function.path}:{function.start_line}; CRAP is N/A.", file=sys.stderr)
+        return None
     return found
 
 

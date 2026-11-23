@@ -3,7 +3,7 @@
 Clojure prefers Cloverage's per-line form counts, then LCOV. Java uses JaCoCo
 instruction counters. Go uses statement profiles. LCOV scores a function by
 its BRDA branch records when it has any, and by line hits otherwise.
-`percent_for` returns None when the file is absent; analysis turns that into 0%.
+`percent_for` returns None when measurements are absent; analysis leaves CRAP N/A.
 """
 
 from __future__ import annotations
@@ -216,7 +216,7 @@ def percent_for_range(lines: dict[int, tuple[int, int]] | None, start: int, end:
         covered += entry[0]
         total += entry[1]
     if total == 0:
-        return 0.0
+        return None
     return coverage_percent(covered, total)
 
 
@@ -375,7 +375,7 @@ def _segments_percent(segments, start: int, end: int) -> float | None:
         if hits > 0:
             covered += statements
     if total == 0:
-        return 0.0
+        return None
     return coverage_percent(covered, total)
 
 
