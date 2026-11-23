@@ -1,7 +1,8 @@
 import shlex
 import sys
-import time
+from crapper.integrity import begin_coverage
 import pytest
+from conftest import mark_reports_fresh
 from crapper.cli import run
 from crapper.integrity import CoverageIntegrityError, RECEIPT, inputs, seal, verify
 from crapper.runners import run_coverage
@@ -37,9 +38,10 @@ def test_modified_during_analysis_is_rejected(tmp_path, coverage_receipt, monkey
 
 def test_cross_checkout_lcov_rejected(tmp_path):
     (tmp_path/'app.ts').write_text('source')
-    before=inputs(tmp_path); start=time.time_ns()
+    before=inputs(tmp_path); start=begin_coverage(tmp_path)
     report=tmp_path/'coverage/lcov.info'; report.parent.mkdir()
     report.write_text('SF:/other/checkout/app.ts\nDA:1,1\nend_of_record\n')
+    mark_reports_fresh(tmp_path,start)
     with pytest.raises(CoverageIntegrityError,match='checkout'):
         seal(tmp_path,before,start,'test')
 
@@ -50,11 +52,12 @@ def test_generated_pytest_cache_is_not_a_coverage_input(tmp_path):
     report.parent.mkdir()
     report.write_text('SF:app.ts\nDA:1,1\nend_of_record\n')
     before=inputs(tmp_path)
-    started=time.time_ns()
+    started=begin_coverage(tmp_path)
     cache=tmp_path/'.pytest_cache/v/cache/nodeids'
     cache.parent.mkdir(parents=True)
     cache.write_text('["test_added"]')
     report.write_text(report.read_text())
+    mark_reports_fresh(tmp_path,started)
     seal(tmp_path,before,started,'pytest fixture')
     cache.write_text('["test_changed"]')
     verify(tmp_path)

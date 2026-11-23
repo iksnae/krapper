@@ -16,7 +16,7 @@ First published Krapper release, derived from unclebob/crapper under 0BSD.
 
 - **Breaking:** coverage is verified by default. Existing unbound reports require `--allow-unverified-coverage` for exploration; this override cannot be used with threshold gates.
 - Coverage tooling is never installed or executed implicitly. Use `--coverage-command` with a trusted report-producing command to create a receipt.
-- Every explicitly written implementation function is accounted for by an AST audit. The release baseline has 358 measured functions, maximum CRAP 5.0, and 278 passing tests.
+- Every explicitly written implementation function is accounted for by an AST audit. The release baseline has 360 measured functions, maximum CRAP 5.0, and 281 passing tests.
 
 ### Fixed
 
@@ -25,6 +25,7 @@ First published Krapper release, derived from unclebob/crapper under 0BSD.
 - Duplicate LCOV records merge coverage without overwriting earlier hits.
 - TypeScript package identities remain distinct, and nonfinite thresholds are rejected.
 - Swift test/build directories and generated pytest caches are excluded from production/input discovery.
+- Freshness checks use the filesystem clock and reject unchanged report metadata, avoiding wall-clock/filesystem timestamp skew.
 
 ### Migration notes
 
