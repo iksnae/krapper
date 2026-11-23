@@ -1,0 +1,29 @@
+[project]
+name = "krapper"
+version = "0.1.0"
+description = "Function-level CRAP scores for Swift, Go, Rust, TypeScript and more."
+readme = "README.md"
+license = { file = "LICENSE" }
+classifiers = ["License :: OSI Approved :: Zero-Clause BSD (0BSD)"]
+requires-python = ">=3.11"
+dependencies = [
+    "tree-sitter>=0.24",
+    "tree-sitter-language-pack==0.13.0",
+]
+
+[project.scripts]
+krapper = "crapper.cli:main"
+crapper = "crapper.cli:main"
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
