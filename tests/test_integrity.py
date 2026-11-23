@@ -1,6 +1,7 @@
 import json
-import time
+from crapper.integrity import begin_coverage
 import pytest
+from conftest import mark_reports_fresh
 from crapper.integrity import CoverageIntegrityError, inputs, seal, verify
 from crapper.cli import parse_args, run
 
@@ -15,9 +16,10 @@ def project(root):
 
 def bind(root):
     before=inputs(root)
-    start=time.time_ns()
+    start=begin_coverage(root)
     report=root/'coverage/lcov.info'
     report.write_text(report.read_text())
+    mark_reports_fresh(root,start)
     seal(root,before,start,'test command')
 
 
@@ -44,13 +46,13 @@ def test_receipt_detects_source_report_and_inventory_changes(tmp_path):
 def test_stale_report_cannot_be_sealed(tmp_path):
     project(tmp_path)
     with pytest.raises(CoverageIntegrityError):
-        seal(tmp_path,inputs(tmp_path),time.time_ns(),'true')
+        seal(tmp_path,inputs(tmp_path),begin_coverage(tmp_path),'true')
 
 
 def test_changed_inputs_during_command_cannot_be_sealed(tmp_path):
     report=project(tmp_path)
     before=inputs(tmp_path)
-    start=time.time_ns()
+    start=begin_coverage(tmp_path)
     (tmp_path/'app.ts').write_text('changed')
     report.write_text(report.read_text())
     with pytest.raises(CoverageIntegrityError): seal(tmp_path,before,start,'test')
@@ -70,9 +72,11 @@ def test_partial_swift_export_is_rejected(tmp_path):
     desc.write_text(json.dumps({'targets':[{'name':name,'type':'test','path':f'Tests/{name}'} for name in ['ATests','BTests']]}))
     export=folder/'coverage.json'
     data={'type':'llvm.coverage.json.export','data':[{'files':[{'filename':str(tmp_path/'Tests/ATests/A.swift'),'segments':[[1,1,1,True,True,False]]}]}]}
-    before=inputs(tmp_path); start=time.time_ns()
+    before=inputs(tmp_path); start=begin_coverage(tmp_path)
     export.write_text(json.dumps(data)); desc.write_text(desc.read_text())
+    mark_reports_fresh(tmp_path,start)
     with pytest.raises(CoverageIntegrityError,match='BTests'): seal(tmp_path,before,start,'swift test')
     data['data'][0]['files'].append({'filename':str(tmp_path/'Tests/BTests/B.swift'),'segments':[[1,1,1,True,True,False]]})
-    start=time.time_ns(); export.write_text(json.dumps(data)); desc.write_text(desc.read_text())
+    start=begin_coverage(tmp_path); export.write_text(json.dumps(data)); desc.write_text(desc.read_text())
+    mark_reports_fresh(tmp_path,start)
     seal(tmp_path,before,start,'swift test'); verify(tmp_path)

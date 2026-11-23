@@ -18,7 +18,7 @@ At `69bde7a`, 201 tests passed. Fresh branch coverage measured all 279 functions
 
 ## Final sweep
 
-The final local run passes 278 tests and measures all 358 explicitly written implementation functions: maximum CRAP 5.0, none unavailable, none above five. The CLI, inherited language readers, coverage matching and legacy runner functions are included; no suppression list or exemption was introduced. An AST audit compares every Python function definition with the measured function spans. Two pre-existing local closures were made explicit module-level policies so neither can hide within its parent’s measurement.
+The final local run passes 281 tests and measures all 360 explicitly written implementation functions: maximum CRAP 5.0, none unavailable, none above five. The CLI, inherited language readers, coverage matching and legacy runner functions are included; no suppression list or exemption was introduced. An AST audit compares every Python function definition with the measured function spans. Two pre-existing local closures were made explicit module-level policies so neither can hide within its parent’s measurement.
 
 Simplifications include declarative decision/entry dispatch, standard-library sequence operations, separated lexical scanning and line accounting, package metadata resolution, explicit coverage matching stages, and per-package runner preparation. Failure tests cover literal boundaries, malformed exports, missing project metadata, unsuccessful installs, failed report generation and abstract Java methods. A threshold error regression preserves the actual offending score instead of rounding `5.0488 > 5.0` into `5.0 > 5.0`.
 

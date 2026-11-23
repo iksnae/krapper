@@ -5,7 +5,6 @@ from __future__ import annotations
 import argparse
 import subprocess
 import math
-import time
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -22,7 +21,7 @@ from crapper.discover import (
     iter_source_files,
     language_of,
 )
-from crapper.integrity import CoverageIntegrityError, inputs, invalidate, seal, verify
+from crapper.integrity import CoverageIntegrityError, begin_coverage, inputs, invalidate, seal, verify
 from crapper.metrics import write_metrics
 from crapper.report import format_report
 from crapper.runners import run_coverage
@@ -280,7 +279,7 @@ class CoverageCommandError(Exception):
 def _record_coverage(options: Options, root: Path, files: list[Path]) -> None:
     invalidate(root)
     before = inputs(root)
-    started = time.time_ns()
+    started = begin_coverage(root)
     status = run_coverage(root, files, options.coverage_command)
     if status != 0:
         raise CoverageCommandError(f"Coverage command exited {status}; snapshot not updated.")

@@ -1,7 +1,8 @@
 """Failure-path checks for the source/report trust boundary."""
 import json
-import time
+from crapper.integrity import begin_coverage
 import pytest
+from conftest import mark_reports_fresh
 from crapper.integrity import CoverageIntegrityError, RECEIPT, inputs, seal, verify
 
 
@@ -27,12 +28,13 @@ def test_invalid_swift_evidence_refuses_receipt(tmp_path, case):
     if case == 'invalid-export':
         export['type'] = 'not coverage'
     before = inputs(tmp_path)
-    started = time.time_ns()
+    started = begin_coverage(tmp_path)
     (tmp_path/'target/coverage/swift-package.json').write_text(json.dumps({'targets':targets}))
     if case == 'no-export':
         (folder/'lcov.info').write_text('SF:Sources/Demo.swift\nDA:1,1\nend_of_record\n')
     else:
         (folder/'coverage.json').write_text(json.dumps(export))
+    mark_reports_fresh(tmp_path,started)
     with pytest.raises(CoverageIntegrityError):
         seal(tmp_path, before, started, 'fixture coverage run')
     assert not (tmp_path/RECEIPT).exists()

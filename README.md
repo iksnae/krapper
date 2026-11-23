@@ -12,6 +12,16 @@ Coverage in this formula is a fraction. Reports display percentages. Different l
 
 Python 3.11+ required. Installation downloads dependencies; analysis uses bundled grammars and does not download them.
 
+Install the published release as an isolated host tool:
+
+```sh
+uv tool install --python 3.12 https://github.com/iksnae/krapper/releases/download/v0.2.0/krapper-0.2.0-py3-none-any.whl
+```
+
+The release includes `SHA256SUMS` for the wheel and source archive. Add `--reinstall` when replacing an existing uv-managed installation.
+
+For development:
+
 ```sh
 python3 -m venv .venv
 .venv/bin/pip install -e '.[dev]'
@@ -35,7 +45,7 @@ Run from the project being measured, or supply its root:
 
 Output is a worst-first table and `.metrics/crap.edn`, compatible with upstream uml-viewer's namespace/name join. The snapshot replaces the previous one. TypeScript nested package paths retain package identity. Overloaded functions can still share namespace/name keys, including Swift overloads.
 
-Only `--coverage-command '...'` executes a command, through a shell in the project root. On success, Krapper records hashes of non-generated checkout inputs (including tests/configuration), the exact report inventory/content and the checkout path. Every recognized report must have been rewritten during that command, and inputs must remain unchanged. Verification is repeated after analysis. Delete stale reports rather than mixing runs. A failed recording attempt invalidates the previous receipt. Use it only on trusted code. A failed custom command returns exit 1, does not read stale reports, and preserves the previous snapshot. An existing snapshot therefore is not evidence that the latest command succeeded. Prefer generating reports separately in CI and only running Krapper after successful tests.
+Only `--coverage-command '...'` executes a command, through a shell in the project root. On success, Krapper records hashes of non-generated checkout inputs (including tests/configuration), the exact report inventory/content and the checkout path. Every recognized report must have been rewritten during that command, and inputs must remain unchanged. Freshness uses a same-filesystem clock marker plus pre/post report metadata, not wall-clock nanoseconds. Unchanged reports are rejected even within one filesystem tick; if a rewrite is indistinguishable, remove old reports or have the producer replace them atomically. Verification is repeated after analysis. Delete stale reports rather than mixing runs. A failed recording attempt invalidates the previous receipt. Use it only on trusted code. A failed custom command returns exit 1, does not read stale reports, and preserves the previous snapshot. An existing snapshot therefore is not evidence that the latest command succeeded. Prefer generating reports separately in CI and only running Krapper after successful tests.
 
 ## Record verified coverage
 

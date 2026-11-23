@@ -2,6 +2,8 @@
 import hashlib
 import json
 import os
+from dataclasses import dataclass
+from tempfile import NamedTemporaryFile
 from pathlib import Path
 
 from crapper.discover import SKIP_DIRS
@@ -127,18 +129,43 @@ def invalidate(root: Path) -> None:
     (root / RECEIPT).unlink(missing_ok=True)
 
 
-def _fresh_report_paths(root: Path, started_ns: int) -> list[Path]:
+@dataclass(frozen=True)
+class CoverageRun:
+    started_ns: int
+    reports: dict[str, tuple]
+
+
+def _report_signature(path: Path) -> tuple:
+    stat = path.stat()
+    return stat.st_mtime_ns, stat.st_ctime_ns, stat.st_size, stat.st_ino
+
+
+def begin_coverage(root: Path) -> CoverageRun:
+    previous = {path.relative_to(root).as_posix(): _report_signature(path) for path in report_paths(root)}
+    folder = root / RECEIPT.parent
+    folder.mkdir(parents=True, exist_ok=True)
+    with NamedTemporaryFile(dir=folder) as clock:
+        clock.write(b"coverage clock")
+        clock.flush()
+        started = Path(clock.name).stat().st_mtime_ns
+    return CoverageRun(started, previous)
+
+
+def _fresh_report_paths(root: Path, run: CoverageRun) -> list[Path]:
     reports = report_paths(root)
     if not reports or reports == [root / DESCRIPTION]:
         raise CoverageIntegrityError('Coverage command produced no recognized reports.')
     for path in reports:
-        _require_fresh_report(path, started_ns)
+        _require_fresh_report(root, path, run)
     return reports
 
 
-def _require_fresh_report(path: Path, started_ns: int) -> None:
-    if path.stat().st_mtime_ns < started_ns:
+def _require_fresh_report(root: Path, path: Path, run: CoverageRun) -> None:
+    signature = _report_signature(path)
+    if signature[0] < run.started_ns:
         raise CoverageIntegrityError(f'Stale report was not regenerated: {path}')
+    if signature == run.reports.get(path.relative_to(root).as_posix()):
+        raise CoverageIntegrityError(f'Report rewrite cannot be established: {path}')
 
 
 def _write_receipt(root: Path, receipt: dict) -> None:
@@ -156,11 +183,11 @@ def _require_unchanged_inputs(root: Path, before: dict) -> None:
         raise CoverageIntegrityError('Source/test/config inputs changed during coverage execution: ' + ', '.join(changed))
 
 
-def seal(root: Path, before: dict, started_ns: int, command: str) -> None:
+def seal(root: Path, before: dict, run: CoverageRun, command: str) -> None:
     """Only called after an explicit coverage command exits zero."""
     invalidate(root)
     _require_unchanged_inputs(root, before)
-    reports = _fresh_report_paths(root, started_ns)
+    reports = _fresh_report_paths(root, run)
     try:
         _report_locations(root, reports)
         _swift_complete(root)
