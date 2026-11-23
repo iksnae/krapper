@@ -27,12 +27,12 @@ jobs:
           tar -xzf "$RUNNER_TEMP/bb.tar.gz" -C "$RUNNER_TEMP/bb"
           echo "$RUNNER_TEMP/bb" >> "$GITHUB_PATH"
           python -m pip install -e '.[dev]'
-      - name: Branch coverage and self-analysis
+      - name: Branch coverage and CRAP ceiling five
         run: >-
           krapper --coverage-command
           'mkdir -p target/coverage/python &&
           COVERAGE_FILE=target/coverage/python/.coverage python -m coverage run --branch --source=src/crapper -m pytest -q &&
           COVERAGE_FILE=target/coverage/python/.coverage python -m coverage lcov -o target/coverage/python/lcov.info'
-          src/crapper
+          --threshold 5 src/crapper
       - name: CLI smoke test
         run: krapper --help

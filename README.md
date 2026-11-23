@@ -94,12 +94,12 @@ Exploratory reports are not freshness-checked. Do not combine stale and current 
 .venv/bin/python -m pytest -q
 ```
 
-The engineering target is **CRAP ≤5 for every implementation function, without exemptions**, measured using fresh branch coverage. The migration is in progress; this ceiling is not yet satisfied or enforced. CI runs branch-coverage self-analysis on both supported Python versions. [Migration status](docs/plans/crap-ceiling.md) records the remaining work.
+The engineering gate is **CRAP ≤5 for every implementation function, without exemptions**, measured using fresh branch coverage. CI regenerates coverage and enforces `--threshold 5` on both supported Python versions. [Migration record](docs/plans/crap-ceiling.md) describes the refactoring and verification.
 
 To reproduce the measurement after installing the development dependencies and Babashka:
 
 ```sh
-krapper --coverage-command 'mkdir -p target/coverage/python && COVERAGE_FILE=target/coverage/python/.coverage python -m coverage run --branch --source=src/crapper -m pytest -q && COVERAGE_FILE=target/coverage/python/.coverage python -m coverage lcov -o target/coverage/python/lcov.info' src/crapper
+krapper --coverage-command 'mkdir -p target/coverage/python && COVERAGE_FILE=target/coverage/python/.coverage python -m coverage run --branch --source=src/crapper -m pytest -q && COVERAGE_FILE=target/coverage/python/.coverage python -m coverage lcov -o target/coverage/python/lcov.info' --threshold 5 src/crapper
 ```
 
 The inherited EDN compatibility test requires `bb` (Babashka). Without it, that test fails; other tests do not require it. Swift analyzer tests are adapted from the contribution above. No real Swift/Go/Rust/TypeScript test runners are required for fixture tests.
