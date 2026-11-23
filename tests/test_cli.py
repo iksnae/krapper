@@ -117,7 +117,7 @@ def test_project_snapshot_is_readable_as_crap4clj_edn(tmp_path):
     assert "demo.Board place 3 nil" in reader.stdout
 
 
-def test_existing_coverage_feeds_the_snapshot(tmp_path):
+def test_existing_coverage_feeds_the_snapshot(tmp_path, coverage_receipt):
     _write(
         tmp_path,
         "src/demo/core.clj",
@@ -129,6 +129,7 @@ def test_existing_coverage_feeds_the_snapshot(tmp_path):
         "SF:src/demo/core.clj\nDA:3,1\nDA:4,1\nend_of_record\n",
         encoding="utf-8",
     )
+    coverage_receipt(tmp_path)
     code = run(
         ["--root", str(tmp_path), "--use-existing-coverage", "src/demo/core.clj"]
     )
@@ -138,11 +139,12 @@ def test_existing_coverage_feeds_the_snapshot(tmp_path):
     assert ":crap 2.0" in text
 
 
-def test_threshold_exits_when_the_worst_score_is_too_high(tmp_path):
+def test_threshold_exits_when_the_worst_score_is_too_high(tmp_path, coverage_receipt):
     _write(tmp_path, "src/demo/core.clj", "(ns demo.core)\n\n(defn choose [x]\n  (if x 1 0))\n")
     lcov = tmp_path / "target" / "coverage" / "lcov.info"
     lcov.parent.mkdir(parents=True)
     lcov.write_text("SF:src/demo/core.clj\nDA:3,0\nDA:4,0\nend_of_record\n", encoding="utf-8")
+    coverage_receipt(tmp_path)
     code = run(
         [
             "--root",
@@ -196,7 +198,11 @@ def test_selects_directories_filters_and_changed_files(tmp_path, monkeypatch, ca
 def test_run_asks_for_coverage_when_it_is_enabled(tmp_path, monkeypatch):
     _write(tmp_path, "src/demo/core.clj", "(ns demo.core)\n\n(defn choose [x]\n  x)\n")
     called = []
-    monkeypatch.setattr("crapper.cli.run_coverage", lambda *args: called.append(args))
+    def generate(*args):
+        called.append(args)
+        _write(tmp_path, "coverage/lcov.info", "SF:src/demo/core.clj\nDA:3,1\nend_of_record\n")
+        return 0
+    monkeypatch.setattr("crapper.cli.run_coverage", generate)
     assert run(["--root", str(tmp_path), "--coverage-command", "true"]) == 0
     assert called
 
@@ -294,11 +300,12 @@ def test_changed_selection_ignores_files_git_did_not_name(tmp_path, monkeypatch,
     assert "No source files" not in capsys.readouterr().out
 
 
-def test_threshold_equal_to_the_score_is_allowed(tmp_path):
+def test_threshold_equal_to_the_score_is_allowed(tmp_path, coverage_receipt):
     _write(tmp_path, "src/demo/core.clj", "(ns demo.core)\n\n(defn choose [] 1)\n")
     lcov = tmp_path / "target" / "coverage" / "lcov.info"
     lcov.parent.mkdir(parents=True)
     lcov.write_text("SF:src/demo/core.clj\nDA:1,1\nDA:3,1\nend_of_record\n", encoding="utf-8")
+    coverage_receipt(tmp_path)
     code = run(
         ["--root", str(tmp_path), "--use-existing-coverage", "--threshold", "1", "src/demo/core.clj"]
     )
@@ -322,7 +329,10 @@ def test_a_failed_coverage_command_ignores_a_stale_report(tmp_path, monkeypatch)
     assert code == 1
     assert not (tmp_path / ".metrics" / "crap.edn").exists()
 
-    monkeypatch.setattr("crapper.cli.run_coverage", lambda *_args, **_kwargs: 0)
+    def generate(*args):
+        lcov.write_text(lcov.read_text())
+        return 0
+    monkeypatch.setattr("crapper.cli.run_coverage", generate)
     assert run(
         ["--root", str(tmp_path), "--coverage-command", "true", "src/demo/core.clj"]
     ) == 0

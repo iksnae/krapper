@@ -5,6 +5,19 @@ That would delete `target/coverage` and recurse into this suite.
 """
 
 import pytest
+import time
+from crapper.integrity import inputs, report_paths, seal
+
+
+@pytest.fixture
+def coverage_receipt():
+    def record(root):
+        before = inputs(root)
+        start = time.time_ns()
+        for path in report_paths(root):
+            path.write_bytes(path.read_bytes())
+        seal(root, before, start, 'fixture test run')
+    return record
 
 
 @pytest.fixture(autouse=True)

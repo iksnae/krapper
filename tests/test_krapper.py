@@ -11,7 +11,7 @@ def test_finite_threshold(value):
 def test_default_does_not_run_coverage(tmp_path, monkeypatch):
     (tmp_path / 'app.go').write_text('package app\nfunc Run() {}')
     monkeypatch.setattr('crapper.cli.run_coverage', lambda *a: pytest.fail('executed coverage'))
-    assert run(['--root', str(tmp_path)]) == 0
+    assert run(['--root', str(tmp_path)]) == 1
 
 def test_lcov_union():
     a = 'SF:a.ts\nDA:1,1\nDA:2,1\nBRDA:1,0,0,1\nBRDA:1,0,1,0\nend_of_record\n'

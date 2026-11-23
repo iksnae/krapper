@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import subprocess
 import math
+import time
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -20,6 +21,7 @@ from crapper.discover import (
     iter_source_files,
     language_of,
 )
+from crapper.integrity import CoverageIntegrityError, inputs, invalidate, seal, verify
 from crapper.metrics import write_metrics
 from crapper.report import format_report
 from crapper.runners import run_coverage
@@ -56,7 +58,8 @@ Options:
   --changed                     Analyze added and modified source files from
                                 git status.
   --no-coverage                 Score complexity only. Coverage and CRAP are N/A.
-  --use-existing-coverage       Read coverage already on disk (the default).
+  --use-existing-coverage       Read source-bound coverage (the default).
+  --allow-unverified-coverage   Exploratory old reports only; cannot gate.
   --coverage-command <cmd>      Explicitly run this shell command, then read
                                 the reports it wrote (trusted projects only).
   --threshold <number>          Exit 2 when a CRAP score is above this;
@@ -104,6 +107,7 @@ class Options:
     coverage_command: str | None = None
     threshold: float | None = None
     changed: bool = False
+    allow_unverified_coverage: bool = False
 
 
 def _take(args: list[str], index: int, option: str) -> str:
@@ -151,6 +155,10 @@ def parse_args(argv: list[str] | None = None) -> Options:
                 options.use_existing_coverage = True
                 index += 1
                 continue
+            if arg == "--allow-unverified-coverage":
+                options.allow_unverified_coverage = True
+                index += 1
+                continue
             if arg == "--changed":
                 options.changed = True
                 index += 1
@@ -161,6 +169,8 @@ def parse_args(argv: list[str] | None = None) -> Options:
             index += 1
     except ValueError as exc:
         return Options(action="help", message=f"{exc}\n\n{HELP}", exit_code=1)
+    if options.allow_unverified_coverage and (options.threshold is not None or options.coverage_command):
+        return Options(action='help', message='Unverified coverage cannot gate or record a run.\n', exit_code=1)
     if options.no_coverage and options.coverage_command:
         return Options(
             action="help",
@@ -293,17 +303,33 @@ class CoverageCommandError(Exception):
 def _coverage_bundle(options: Options, root: Path, files: list[Path]):
     if options.no_coverage:
         return None
-    if not options.coverage_command:
-        return load_bundle(root)
-    status = run_coverage(root, files, options.coverage_command)
-    if options.coverage_command and status not in (0, None):
-        raise CoverageCommandError(f"Coverage command exited {status}; snapshot not updated.")
+    if any(not path.resolve().is_relative_to(root) for path in files) and not options.allow_unverified_coverage:
+        raise CoverageIntegrityError('Strict coverage sources must be inside --root.')
+    if options.coverage_command:
+        invalidate(root)
+        before = inputs(root)
+        started = time.time_ns()
+        status = run_coverage(root, files, options.coverage_command)
+        if status != 0:
+            raise CoverageCommandError(f"Coverage command exited {status}; snapshot not updated.")
+        seal(root, before, started, options.coverage_command)
+    elif options.allow_unverified_coverage:
+        print('WARNING: exploratory UNVERIFIED coverage; not valid gate evidence.', file=sys.stderr)
+    else:
+        verify(root)
+    if not options.allow_unverified_coverage:
+        bound = inputs(root)
+        if any(path.resolve().relative_to(root).as_posix() not in bound for path in files):
+            raise CoverageIntegrityError('Selected sources are excluded from receipt inputs.')
     return load_bundle(root)
 
 
 def _threshold_status(options: Options, entries) -> int:
     if options.threshold is None:
         return 0
+    if not entries:
+        print('Cannot evaluate CRAP threshold: no scorable entries.', file=sys.stderr)
+        return 1
     if any(entry.crap is None for entry in entries):
         print("Cannot evaluate CRAP threshold: coverage is unavailable for some entries.", file=sys.stderr)
         return 1
@@ -330,14 +356,20 @@ def run(argv: list[str] | None = None) -> int:
         return exc.code
     if not files:
         print("No source files to analyze.")
-        return 0
+        return 1 if options.threshold is not None or options.coverage_command else 0
 
     try:
         bundle = _coverage_bundle(options, root, files)
-    except CoverageCommandError as exc:
+    except (CoverageCommandError, CoverageIntegrityError, OSError, ValueError, KeyError, TypeError) as exc:
         print(str(exc), file=sys.stderr)
         return 1
     entries = analyze_files(files, root, bundle)
+    if not options.no_coverage and not options.allow_unverified_coverage:
+        try:
+            verify(root)
+        except CoverageIntegrityError as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
     metrics = write_metrics(entries, root)
     print(format_report(entries), end="", flush=True)
     print(f"Wrote {metrics}", file=sys.stderr)

@@ -30,6 +30,8 @@ def test_incomplete_threshold_fails(tmp_path, partial):
         report.parent.mkdir()
         report.write_text('SF:covered.ts\nDA:1,1\nend_of_record\n')
     assert run(['--root', str(tmp_path), '--threshold', '30']) == 1
+    assert not (tmp_path / '.metrics/crap.edn').exists()
+    assert run(['--root', str(tmp_path), '--allow-unverified-coverage']) == 0
     metrics = (tmp_path / '.metrics/crap.edn').read_text()
     assert ':coverage nil' in metrics and ':crap nil' in metrics
 
