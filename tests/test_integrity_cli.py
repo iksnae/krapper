@@ -44,6 +44,22 @@ def test_cross_checkout_lcov_rejected(tmp_path):
         seal(tmp_path,before,start,'test')
 
 
+def test_generated_pytest_cache_is_not_a_coverage_input(tmp_path):
+    (tmp_path/'app.ts').write_text('source')
+    report=tmp_path/'coverage/lcov.info'
+    report.parent.mkdir()
+    report.write_text('SF:app.ts\nDA:1,1\nend_of_record\n')
+    before=inputs(tmp_path)
+    started=time.time_ns()
+    cache=tmp_path/'.pytest_cache/v/cache/nodeids'
+    cache.parent.mkdir(parents=True)
+    cache.write_text('["test_added"]')
+    report.write_text(report.read_text())
+    seal(tmp_path,before,started,'pytest fixture')
+    cache.write_text('["test_changed"]')
+    verify(tmp_path)
+
+
 def test_empty_selection_cannot_pass_gate(tmp_path):
     assert run(['--root',str(tmp_path),'--threshold','30'])==1
     assert run(['--root',str(tmp_path),'--coverage-command','true'])==1

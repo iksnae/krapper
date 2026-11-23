@@ -34,6 +34,7 @@ SKIP_DIRS = {
     ".svn",
     ".idea",
     ".venv",
+    ".pytest_cache",
     "venv",
     "node_modules",
     "vendor",
