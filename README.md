@@ -12,6 +12,16 @@ Coverage in this formula is a fraction. Reports display percentages. Different l
 
 Python 3.11+ required. Installation downloads dependencies; analysis uses bundled grammars and does not download them.
 
+Install the published release as an isolated host tool:
+
+```sh
+uv tool install --python 3.12 https://github.com/iksnae/krapper/releases/download/v0.2.0/krapper-0.2.0-py3-none-any.whl
+```
+
+The release includes `SHA256SUMS` for the wheel and source archive. Add `--reinstall` when replacing an existing uv-managed installation.
+
+For development:
+
 ```sh
 python3 -m venv .venv
 .venv/bin/pip install -e '.[dev]'
