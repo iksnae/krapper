@@ -89,24 +89,30 @@ def _key_has_suffix(key_parts: list[str], parts: list[str]) -> bool:
     return key_parts[-len(parts) :] == parts
 
 
-def _forward_matches(
-    items: list[tuple[str, str]],
-    parts_of: list[tuple[str, list[str]]],
-    source_parts: list[tuple[str, ...]],
-) -> list[str]:
-    forward: list[tuple[int, str]] = []
+def _forward_distance(norm: str, parts: list[str], source_parts) -> int | None:
+    key_parts = _segments(norm)
+    if not _key_has_suffix(key_parts, parts):
+        return None
+    if _longer_source_owns(key_parts, len(parts), source_parts):
+        return None
+    return len(key_parts) - len(parts)
+
+
+def _closest_matches(matches: list[tuple[int, str]]) -> list[str]:
+    if not matches:
+        return []
+    smallest = min(extra for extra, _key in matches)
+    return list(dict.fromkeys(key for extra, key in matches if extra == smallest))
+
+
+def _forward_matches(items, parts_of, source_parts) -> list[str]:
+    matches = []
     for _candidate, parts in parts_of:
         for original, norm in items:
-            key_parts = _segments(norm)
-            if not _key_has_suffix(key_parts, parts):
-                continue
-            if _longer_source_owns(key_parts, len(parts), source_parts):
-                continue
-            forward.append((len(key_parts) - len(parts), original))
-    if not forward:
-        return []
-    smallest = min(extra for extra, _key in forward)
-    return list(dict.fromkeys(key for extra, key in forward if extra == smallest))
+            distance = _forward_distance(norm, parts, source_parts)
+            if distance is not None:
+                matches.append((distance, original))
+    return _closest_matches(matches)
 
 
 def _key_is_proper_suffix(parts: list[str], key_parts: list[str]) -> bool:
@@ -115,25 +121,21 @@ def _key_is_proper_suffix(parts: list[str], key_parts: list[str]) -> bool:
     return parts[-len(key_parts) :] == key_parts
 
 
-def _reverse_key(
-    items: list[tuple[str, str]],
-    parts_of: list[tuple[str, list[str]]],
-    source_parts: list[tuple[str, ...]],
-) -> str | None:
+def _reverse_candidate(norm: str, parts: list[str], source_parts, own) -> bool:
+    key_parts = _segments(norm)
+    return (_key_is_proper_suffix(parts, key_parts)
+            and not _another_source_ends_with(key_parts, source_parts, own))
+
+
+def _reverse_key(items, parts_of, source_parts) -> str | None:
     own = {tuple(parts) for _candidate, parts in parts_of}
-    reverse: list[str] = []
+    reverse = []
     for _candidate, parts in parts_of:
         for original, norm in items:
-            key_parts = _segments(norm)
-            if not _key_is_proper_suffix(parts, key_parts):
-                continue
-            if _another_source_ends_with(key_parts, source_parts, own):
-                continue
-            reverse.append(original)
+            if _reverse_candidate(norm, parts, source_parts, own):
+                reverse.append(original)
     unique = list(dict.fromkeys(reverse))
-    if len(unique) == 1:
-        return unique[0]
-    return None
+    return unique[0] if len(unique) == 1 else None
 
 
 def _select_key(
@@ -173,16 +175,10 @@ def _longer_source_owns(
 
 
 def _another_source_ends_with(
-    key_parts: list[str],
-    source_parts: list[tuple[str, ...]],
-    own: set[tuple[str, ...]],
+    key_parts: list[str], source_parts: list[tuple[str, ...]], own: set[tuple[str, ...]]
 ) -> bool:
-    for other in source_parts:
-        if other in own or len(other) < len(key_parts):
-            continue
-        if list(other[-len(key_parts) :]) == key_parts:
-            return True
-    return False
+    return any(other not in own and len(other) >= len(key_parts)
+               and list(other[-len(key_parts):]) == key_parts for other in source_parts)
 
 
 def _candidates(source_path: str) -> list[str]:
@@ -204,6 +200,10 @@ def coverage_percent(covered: int, total: int) -> float:
     return 100.0 * covered / total
 
 
+def _measured_percent(covered: int, total: int) -> float | None:
+    return coverage_percent(covered, total) if total else None
+
+
 def percent_for_range(lines: dict[int, tuple[int, int]] | None, start: int, end: int) -> float | None:
     if lines is None:
         return None
@@ -215,9 +215,7 @@ def percent_for_range(lines: dict[int, tuple[int, int]] | None, start: int, end:
             continue
         covered += entry[0]
         total += entry[1]
-    if total == 0:
-        return None
-    return coverage_percent(covered, total)
+    return _measured_percent(covered, total)
 
 
 def parse_form_coverage(html: str) -> dict[int, tuple[int, int]]:
@@ -308,24 +306,26 @@ def branch_percent(record, start: int, end: int) -> float | None:
     return coverage_percent(covered, total)
 
 
-def parse_go_profile(text: str) -> dict[str, list[tuple[int, int, int, int]]]:
-    """Map file → (start_line, end_line, statements, hits)."""
+def _go_segment(line: str, line_number: int, raw: str):
+    fields = line.split()
+    if len(fields) != 3 or ":" not in fields[0]:
+        raise ValueError(f"invalid coverage segment on line {line_number}: {raw!r}")
+    file_part, range_part = fields[0].split(":", 1)
+    start_text, end_text = range_part.split(",", 1)
+    start = int(start_text.split(".", 1)[0])
+    end = int(end_text.split(".", 1)[0])
+    return file_part, (start, end, int(fields[1]), int(fields[2]))
 
-    out: dict[str, list[tuple[int, int, int, int]]] = {}
-    for line_number, raw in enumerate(text.splitlines(), start=1):
+
+def parse_go_profile(text: str) -> dict[str, list[tuple[int, int, int, int]]]:
+    """Map file to statement spans and execution counts."""
+    out = {}
+    for number, raw in enumerate(text.splitlines(), start=1):
         line = raw.strip()
         if not line or line.startswith("mode:"):
             continue
-        fields = line.split()
-        if len(fields) != 3 or ":" not in fields[0]:
-            raise ValueError(f"invalid coverage segment on line {line_number}: {raw!r}")
-        file_part, range_part = fields[0].split(":", 1)
-        start_text, end_text = range_part.split(",", 1)
-        start_line = int(start_text.split(".", 1)[0])
-        end_line = int(end_text.split(".", 1)[0])
-        statements = int(fields[1])
-        hits = int(fields[2])
-        out.setdefault(file_part, []).append((start_line, end_line, statements, hits))
+        file_part, segment = _go_segment(line, number, raw)
+        out.setdefault(file_part, []).append(segment)
     return out
 
 
@@ -363,20 +363,23 @@ def go_percent(
     return _segments_percent(_profile_segments(profile, path, source_parts), start, end)
 
 
+def _segment_overlaps(segment, start: int, end: int) -> bool:
+    return segment[1] >= start and segment[0] <= end
+
+
 def _segments_percent(segments, start: int, end: int) -> float | None:
     if segments is None:
         return None
     total = 0
     covered = 0
-    for seg_start, seg_end, statements, hits in segments:
-        if seg_end < start or seg_start > end:
+    for segment in segments:
+        if not _segment_overlaps(segment, start, end):
             continue
+        _, _, statements, hits = segment
         total += statements
         if hits > 0:
             covered += statements
-    if total == 0:
-        return None
-    return coverage_percent(covered, total)
+    return _measured_percent(covered, total)
 
 
 @dataclass
@@ -393,8 +396,7 @@ class JacocoMethod:
 def _jacoco_from_index(classes, class_names, method_name, line) -> float | None:
     pool: list[JacocoMethod] = []
     for name in class_names:
-        for method in classes.get(f"{name}#{method_name}", []):
-            pool.append(method)
+        pool.extend(classes.get(f"{name}#{method_name}", []))
     if not pool:
         return None
     for method in pool:
@@ -402,6 +404,7 @@ def _jacoco_from_index(classes, class_names, method_name, line) -> float | None:
             return method.percent
     nearest = min(pool, key=lambda method: abs(method.line - line))
     return nearest.percent
+
 
 
 def _instruction_counter(method):
@@ -459,32 +462,27 @@ class CoverageBundle:
     def bind_sources(self, paths: list[str]) -> None:
         """Remember project files so a short path cannot take a longer file's report."""
 
-        found: list[tuple[str, ...]] = []
-        seen: set[tuple[str, ...]] = set()
-        for source in paths:
-            for candidate in _candidates(source):
-                parts = tuple(_segments(candidate))
-                if parts and parts not in seen:
-                    seen.add(parts)
-                    found.append(parts)
-        self.source_parts = found
+        parts = [tuple(_segments(candidate)) for source in paths for candidate in _candidates(source)]
+        self.source_parts = list(dict.fromkeys(filter(None, parts)))
 
     def percent_for(self, function: Function) -> float | None:
         if function.language == "java":
-            names = []
-            if function.jacoco_class:
-                names.append(function.jacoco_class)
-            if function.namespace not in names:
-                names.append(function.namespace)
-            return _jacoco_from_index(
-                self.jacoco or {}, names, function.name, function.start_line
-            )
+            return self._java_percent(function)
         if function.language == "go":
             segments = self._go_segments(function.path)
             return _segments_percent(segments, function.start_line, function.end_line)
         html = self._html_lines(function.path)
         if html is not None:
             return percent_for_range(html, function.start_line, function.end_line)
+        return self._lcov_percent(function)
+
+    def _java_percent(self, function: Function) -> float | None:
+        names = [function.namespace]
+        if function.jacoco_class and function.jacoco_class != function.namespace:
+            names.insert(0, function.jacoco_class)
+        return _jacoco_from_index(self.jacoco or {}, names, function.name, function.start_line)
+
+    def _lcov_percent(self, function: Function) -> float | None:
         record = self._lcov_lines(function.path)
         if record is None:
             return None

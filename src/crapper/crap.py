@@ -36,12 +36,12 @@ def make_entry(function: Function, coverage: float | None) -> Entry:
     )
 
 
+def _entry_sort_key(entry: Entry) -> tuple:
+    if entry.crap is None:
+        return (1, -entry.complexity, entry.namespace, entry.name, entry.path)
+    return (0, -entry.crap, entry.namespace, entry.name, entry.path)
+
+
 def sort_entries(entries: list[Entry]) -> list[Entry]:
     """Worst CRAP first. Unscored rows follow scored rows."""
-
-    def key(entry: Entry) -> tuple:
-        if entry.crap is None:
-            return (1, -entry.complexity, entry.namespace, entry.name, entry.path)
-        return (0, -entry.crap, entry.namespace, entry.name, entry.path)
-
-    return sorted(entries, key=key)
+    return sorted(entries, key=_entry_sort_key)

@@ -325,7 +325,7 @@ def _threshold_status(options: Options, entries) -> int:
     worst = max(entry.crap for entry in entries)
     if worst > options.threshold:
         print(
-            f"CRAP threshold exceeded: {worst:.1f} > {options.threshold:.1f}",
+            f"CRAP threshold exceeded: {worst} > {options.threshold}",
             file=sys.stderr,
         )
         return 2

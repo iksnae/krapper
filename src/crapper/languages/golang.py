@@ -79,65 +79,65 @@ def _function_name(data: bytes, fn) -> str | None:
     return node_text(data, ident)
 
 
-def package_namespace(path: str, package_name: str) -> str:
-    """Import path of the package, or the package clause when no go.mod exists."""
+def _module_directory(path: Path) -> Path | None:
+    for directory in (path.parent, *path.parent.parents):
+        if (directory / "go.mod").is_file():
+            return directory
+    return None
 
-    current = Path(path).resolve().parent
-    module = None
-    module_dir = None
-    while True:
-        candidate = current / "go.mod"
-        if candidate.is_file():
-            for line in candidate.read_text(encoding="utf-8").splitlines():
-                stripped = line.strip()
-                if stripped.startswith("module "):
-                    module = stripped.split(None, 1)[1].strip()
-                    module_dir = current
-                    break
-            break
-        if current.parent == current:
-            break
-        current = current.parent
-    if not module or module_dir is None:
+
+def _module_declaration(directory: Path) -> str | None:
+    for line in (directory / "go.mod").read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if stripped.startswith("module "):
+            return stripped.split(None, 1)[1].strip()
+    return None
+
+
+def package_namespace(path: str, package_name: str) -> str:
+    """Import path of the package, or its package clause without a module."""
+    directory = _module_directory(Path(path).resolve())
+    if directory is None:
         return package_name
-    relative = Path(path).resolve().parent.relative_to(module_dir).as_posix()
-    if relative == ".":
-        return module
-    return f"{module}/{relative}"
+    module = _module_declaration(directory)
+    if not module:
+        return package_name
+    relative = Path(path).resolve().parent.relative_to(directory).as_posix()
+    return module if relative == "." else f"{module}/{relative}"
+
+
+def _has_function_body(node) -> bool:
+    return node.type in {"function_declaration", "method_declaration"} and child_of_type(node, "block") is not None
+
+
+def _function_identity(data: bytes, node, package: str):
+    if node.type == "method_declaration":
+        receiver = _receiver_type(data, node)
+        namespace = f"{package}.{receiver}" if receiver else None
+        return _method_name(data, node), namespace
+    return _function_name(data, node), package
+
+
+def _record_function(data: bytes, node, package: str, path: str) -> Function | None:
+    if not _has_function_body(node):
+        return None
+    name, namespace = _function_identity(data, node, package)
+    if not name or namespace is None:
+        return None
+    return Function(name=name, namespace=namespace,
+                    complexity=complexity(node, _is_decision, _skip),
+                    start_line=start_line(node), end_line=end_line(node),
+                    path=path, language="go")
 
 
 def functions_in_source(
     source: str, path: str, project_root: str | None = None
 ) -> list[Function]:
     data, tree = parse(source, "go")
-    package_name = _package_clause(data, tree.root_node)
-    package_ns = package_namespace(_absolute(path, project_root), package_name)
+    package = package_namespace(_absolute(path, project_root), _package_clause(data, tree.root_node))
     found: list[Function] = []
     for node in descendants(tree.root_node):
-        if node.type not in {"function_declaration", "method_declaration"}:
-            continue
-        if child_of_type(node, "block") is None:
-            continue
-        if node.type == "method_declaration":
-            name = _method_name(data, node)
-            receiver = _receiver_type(data, node)
-            if not name or not receiver:
-                continue
-            namespace = f"{package_ns}.{receiver}"
-        else:
-            name = _function_name(data, node)
-            if not name:
-                continue
-            namespace = package_ns
-        found.append(
-            Function(
-                name=name,
-                namespace=namespace,
-                complexity=complexity(node, _is_decision, _skip),
-                start_line=start_line(node),
-                end_line=end_line(node),
-                path=path,
-                language="go",
-            )
-        )
+        recorded = _record_function(data, node, package, path)
+        if recorded is not None:
+            found.append(recorded)
     return found

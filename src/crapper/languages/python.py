@@ -100,6 +100,10 @@ def _class_names(data: bytes, node) -> list[str]:
     return names
 
 
+def _is_module_function(node) -> bool:
+    return node.type == "function_definition" and not _is_nested_function(node)
+
+
 def functions_in_source(
     source: str, path: str, source_root: str | None = None
 ) -> list[Function]:
@@ -107,7 +111,7 @@ def functions_in_source(
     module = _module_namespace(path, source_root)
     found: list[Function] = []
     for node in descendants(tree.root_node):
-        if node.type != "function_definition" or _is_nested_function(node):
+        if not _is_module_function(node):
             continue
         ident = child_of_type(node, "identifier")
         if ident is None:

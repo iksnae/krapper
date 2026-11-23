@@ -88,20 +88,23 @@ def _impl_type(data: bytes, impl) -> str | None:
     return chosen
 
 
+def _cargo_package_name(cargo: Path) -> str | None:
+    block = _PACKAGE_BLOCK.search(cargo.read_text(encoding="utf-8"))
+    if block is None:
+        return None
+    match = _NAME.search(block.group(1))
+    name = match.group(1) if match else cargo.parent.name
+    return name.replace("-", "_")
+
+
 def _crate_name(path: str) -> tuple[str, Path | None]:
-    current = Path(path).resolve().parent
-    while True:
-        cargo = current / "Cargo.toml"
+    parent = Path(path).resolve().parent
+    for directory in (parent, *parent.parents):
+        cargo = directory / "Cargo.toml"
         if cargo.is_file():
-            text = cargo.read_text(encoding="utf-8")
-            block = _PACKAGE_BLOCK.search(text)
-            if block:
-                match = _NAME.search(block.group(1))
-                name = match.group(1) if match else current.name
-                return name.replace("-", "_"), current
-        if current.parent == current:
-            break
-        current = current.parent
+            name = _cargo_package_name(cargo)
+            if name is not None:
+                return name, directory
     return "crate", None
 
 

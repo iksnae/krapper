@@ -66,49 +66,64 @@ _WHERE_PARENTS = {"for_statement", "catch_block"}
 _PROPERTY_BODIES = {"computed_property", "willset_didset_block"}
 # The standard library type behind each sugared type an extension can name.
 _SUGARED_TYPES = {"array_type": "Array", "dictionary_type": "Dictionary", "optional_type": "Optional"}
+_PARENT_CONTEXTS = {"?": _QUESTION_PARENTS, ",": _CONDITION_LISTS,
+                    "where_clause": _WHERE_PARENTS, "where_keyword": {"switch_entry"}}
+_ENTRY_BODIES = {"init_declaration": ("init", "function_body"),
+                 "deinit_declaration": ("deinit", "function_body"),
+                 "subscript_declaration": ("subscript", "computed_property")}
+_PAREN_DEPTH = {"(": 1, ")": -1}
 
 
 def _blank(text: str) -> str:
     return re.sub(r"[^\n]", " ", text)
 
 
+def _string_boundary(source: str, index: int, closing: str, quote: str) -> int | None:
+    if source.startswith(closing, index):
+        return index + len(closing)
+    if source[index] == "\n" and quote == '"':
+        return index
+    return None
+
+
+def _escape_width(source: str, index: int, hashes: int) -> int:
+    return 2 if source[index] == "\\" and not hashes else 1
+
+
 def _string_end(source: str, start: int, hashes: int) -> int:
-    """The index after the string literal whose opening quote is at `start`.
-
-    A raw string, opened with `hashes` `#`s, has no escapes and ends at a quote
-    followed by as many `#`s. A single-line string also ends at a newline, so
-    an unmatched quote cannot run on.
-    """
-
+    """Skip a quoted literal, honoring escapes and raw-string hash delimiters."""
     quote = '"""' if source.startswith('"""', start) else '"'
     closing = quote + "#" * hashes
     index = start + len(quote)
     while index < len(source):
-        if source[index] == "\\" and not hashes:
-            index += 2
-        elif source.startswith(closing, index):
-            return index + len(closing)
-        elif source[index] == "\n" and quote == '"':
-            return index
-        else:
-            index += 1
+        boundary = _string_boundary(source, index, closing, quote)
+        if boundary is not None:
+            return boundary
+        index += _escape_width(source, index, hashes)
     return index
 
 
-def _skipped(source: str, index: int) -> int | None:
-    """The index after the comment or string literal starting at `index`, if one does."""
+def _comment_end(source: str, index: int) -> int | None:
+    prefix = source[index:index + 2]
+    terminator = {"//": "\n", "/*": "*/"}.get(prefix)
+    if terminator is None:
+        return None
+    end = source.find(terminator, index + 2)
+    if end < 0:
+        return len(source)
+    return end if prefix == "//" else end + 2
 
-    if source.startswith("//", index):
-        end = source.find("\n", index)
-        return len(source) if end < 0 else end
-    if source.startswith("/*", index):
-        end = source.find("*/", index + 2)
-        return len(source) if end < 0 else end + 2
-    quote = index
-    while quote < len(source) and source[quote] == "#":
-        quote += 1
-    if quote < len(source) and source[quote] == '"':
-        return _string_end(source, quote, quote - index)
+
+def _skipped(source: str, index: int) -> int | None:
+    """Skip a comment or quoted literal; return None for an ordinary token."""
+    comment = _comment_end(source, index)
+    if comment is not None:
+        return comment
+    tail = source[index:]
+    hashes = len(tail) - len(tail.lstrip("#"))
+    quote = index + hashes
+    if source[quote:quote + 1] == '"':
+        return _string_end(source, quote, hashes)
     return None
 
 
@@ -123,12 +138,10 @@ def _close_paren(source: str, start: int) -> int:
         if skipped is not None:
             index = skipped
             continue
-        if source[index] == "(":
-            depth += 1
-        elif source[index] == ")":
-            depth -= 1
+        depth += _PAREN_DEPTH.get(source[index], 0)
         index += 1
     return index
+
 
 
 def _without_init_where_clauses(source: str) -> str:
@@ -171,29 +184,25 @@ def _is_decision(node) -> bool:
         return child_of_type(node, "default_keyword") is None
     if kind in _OPERATORS:
         return parent == _OPERATORS[kind]
-    if kind == "?":
-        return parent in _QUESTION_PARENTS
-    if kind == ",":
-        return parent in _CONDITION_LISTS
-    if kind == "where_clause":
-        return parent in _WHERE_PARENTS
-    if kind == "where_keyword":
-        return parent == "switch_entry"
-    return False
+    return parent in _PARENT_CONTEXTS.get(kind, ())
 
 
 def _skip(_node) -> bool:
     return False
 
 
+def _extended_type_name(data: bytes, node) -> str | None:
+    extended = child_of_type(node, "user_type")
+    if extended is None:
+        sugared = (_SUGARED_TYPES.get(child.type) for child in node.children)
+        return next((name for name in sugared if name), None)
+    names = [node_text(data, part) for part in extended.children if part.type == "type_identifier"]
+    return ".".join(names) or None
+
+
 def _type_name(data: bytes, node) -> str | None:
     if child_of_type(node, "extension") is not None:
-        extended = child_of_type(node, "user_type")
-        if extended is None:
-            sugared = (_SUGARED_TYPES.get(child.type) for child in node.children)
-            return next((name for name in sugared if name), None)
-        names = [node_text(data, part) for part in extended.children if part.type == "type_identifier"]
-        return ".".join(names) or None
+        return _extended_type_name(data, node)
     ident = child_of_type(node, "type_identifier")
     return node_text(data, ident) if ident is not None else None
 
@@ -240,22 +249,20 @@ def _property_name(data: bytes, node) -> str | None:
     return node_text(data, ident)
 
 
+def _function_name(data: bytes, node) -> str | None:
+    ident = child_of_type(node, "simple_identifier")
+    if ident is None or child_of_type(node, "function_body") is None:
+        return None
+    return node_text(data, ident)
+
+
 def _entry_name(data: bytes, node) -> str | None:
-    kind = node.type
-    if kind == "function_declaration":
-        ident = child_of_type(node, "simple_identifier")
-        if ident is None or child_of_type(node, "function_body") is None:
-            return None
-        return node_text(data, ident)
-    if kind == "init_declaration":
-        return "init" if child_of_type(node, "function_body") is not None else None
-    if kind == "deinit_declaration":
-        return "deinit" if child_of_type(node, "function_body") is not None else None
-    if kind == "subscript_declaration":
-        return "subscript" if child_of_type(node, "computed_property") is not None else None
-    if kind == "property_declaration":
+    if node.type == "function_declaration":
+        return _function_name(data, node)
+    if node.type == "property_declaration":
         return _property_name(data, node)
-    return None
+    name, body = _ENTRY_BODIES.get(node.type, (None, None))
+    return name if child_of_type(node, body) is not None else None
 
 
 class _Reader:

@@ -37,46 +37,44 @@ def _blank_span(source: str, start: int, end: int, out: list[str]) -> None:
 
 
 def _advance_past_reader_token(source: str, index: int) -> int | None:
-    """Index after a string, character, or comment, or None when `index` is code."""
-
+    """End of a string, character or comment; None for a code token."""
     ch = source[index]
     if ch == '"':
         return _consume_string(source, index, 1)[0]
     if ch == "\\":
         return _char_literal_end(source, index)
-    if ch != ";":
-        return None
-    while index < len(source) and source[index] != "\n":
-        index += 1
-    return index
+    if ch == ";":
+        return _comment_end(source, index)
+    return None
 
 
 def _balanced_end(source: str, index: int) -> int:
     opener = source[index]
     closer = {"(": ")", "[": "]", "{": "}"}[opener]
+    deltas = {opener: 1, closer: -1}
     depth = 0
     while index < len(source):
         nxt = _advance_past_reader_token(source, index)
         if nxt is not None:
             index = nxt
             continue
-        ch = source[index]
+        depth += deltas.get(source[index], 0)
         index += 1
-        if ch == opener:
-            depth += 1
-        elif ch == closer:
-            depth -= 1
-            if depth == 0:
-                return index
+        if depth == 0:
+            return index
     return index
 
 
+def _comment_end(source: str, index: int) -> int:
+    end = source.find("\n", index)
+    return len(source) if end < 0 else end
+
+
 def _skip_space_and_comment(source: str, index: int) -> int:
-    while index < len(source) and source[index].isspace():
-        index += 1
+    tail = source[index:]
+    index += len(tail) - len(tail.lstrip())
     if index < len(source) and source[index] == ";":
-        while index < len(source) and source[index] != "\n":
-            index += 1
+        return _comment_end(source, index)
     return index
 
 
@@ -117,37 +115,19 @@ def _form_end(source: str, index: int) -> int:
 
 
 def without_strings_and_comments(source: str) -> str:
-    """Blank strings, comments, character literals, and `#_` discarded forms.
-
-    Character literals are blanked before `"` or `;` can be read, so `\\"` does
-    not open a string and `\\;` does not open a comment.
-    """
-
-    out: list[str] = []
+    """Blank discarded forms and non-code lexical spans, retaining newlines."""
+    out = []
     index = 0
     while index < len(source):
         if source.startswith("#_", index):
             end = _form_end(source, index + 2)
+        else:
+            end = _advance_past_reader_token(source, index)
+        if end is not None:
             _blank_span(source, index, end, out)
             index = end
             continue
-        ch = source[index]
-        if ch == '"':
-            end = _consume_string(source, index, 1)[0]
-            _blank_span(source, index, end, out)
-            index = end
-            continue
-        if ch == "\\":
-            end = _char_literal_end(source, index)
-            _blank_span(source, index, end, out)
-            index = end
-            continue
-        if ch == ";":
-            while index < len(source) and source[index] != "\n":
-                out.append(" ")
-                index += 1
-            continue
-        out.append(ch)
+        out.append(source[index])
         index += 1
     return "".join(out)
 
@@ -178,23 +158,22 @@ def _on_atom(depth: int, in_form: bool, forms: int) -> tuple[int, bool, int]:
     return depth, True, forms
 
 
+def _form_state_after(ch: str, depth: int, in_form: bool, forms: int):
+    if _open_bracket(ch):
+        return _on_open_bracket(depth, in_form, forms)
+    if _close_bracket(ch):
+        return _on_close_bracket(depth, in_form, forms)
+    if ch.isspace():
+        return depth, depth != 1, forms
+    return _on_atom(depth, in_form, forms)
+
+
 def _count_top_level_forms(text: str, start: int) -> int:
-    depth = 1
-    forms = 0
-    in_form = False
-    i = start
-    n = len(text)
-    while i < n and depth != 0:
-        ch = text[i]
-        if _open_bracket(ch):
-            depth, in_form, forms = _on_open_bracket(depth, in_form, forms)
-        elif _close_bracket(ch):
-            depth, in_form, forms = _on_close_bracket(depth, in_form, forms)
-        elif ch.isspace():
-            in_form = depth != 1
-        else:
-            depth, in_form, forms = _on_atom(depth, in_form, forms)
-        i += 1
+    depth, forms, in_form = 1, 0, False
+    index = start
+    while index < len(text) and depth != 0:
+        depth, in_form, forms = _form_state_after(text[index], depth, in_form, forms)
+        index += 1
     return forms
 
 
@@ -257,7 +236,7 @@ def _consume_comment(source: str, index: int, line: int) -> tuple[int, int]:
     return index, line
 
 
-def _consume_string(source: str, index: int, line: int) -> tuple[int, int]:
+def _string_end_index(source: str, index: int) -> int:
     index += 1
     escaped = False
     while index < len(source):
@@ -267,11 +246,14 @@ def _consume_string(source: str, index: int, line: int) -> tuple[int, int]:
         elif ch == "\\":
             escaped = True
         elif ch == '"':
-            return index + 1, line
-        if ch == "\n":
-            line += 1
+            return index + 1
         index += 1
-    return index, line
+    return index
+
+
+def _consume_string(source: str, index: int, line: int) -> tuple[int, int]:
+    end = _string_end_index(source, index)
+    return end, line + source.count("\n", index, end)
 
 
 _NAME_STOP = " \t\n\r()[]{}\""
@@ -369,29 +351,28 @@ def _skip_reader(source: str, index: int, line: int) -> tuple[int, int] | None:
     return None
 
 
+def _top_level_bracket(forms: list, source: str, state: tuple, index: int, line: int) -> tuple:
+    depth, form_start, form_line = state
+    if source[index] == "(":
+        if depth == 0:
+            form_start, form_line = index, line
+        return depth + 1, form_start, form_line
+    if source[index] == ")":
+        return _close_form(forms, source, depth, form_start, form_line, index, line)
+    return state
+
+
 def _extract_top_level_defns(source: str) -> list[dict]:
-    forms: list[dict] = []
-    index = 0
-    line = 1
-    depth = 0
-    form_start = None
-    form_line = None
+    forms = []
+    index, line = 0, 1
+    state = (0, None, None)
     while index < len(source):
         skipped = _skip_reader(source, index, line)
         if skipped is not None:
             index, line = skipped
             continue
-        ch = source[index]
-        if ch == "(":
-            if depth == 0:
-                form_start = index
-                form_line = line
-            depth += 1
-        elif ch == ")":
-            depth, form_start, form_line = _close_form(
-                forms, source, depth, form_start, form_line, index, line
-            )
-        if ch == "\n":
+        state = _top_level_bracket(forms, source, state, index, line)
+        if source[index] == "\n":
             line += 1
         index += 1
     return forms
@@ -420,15 +401,18 @@ def declared_namespace(source: str) -> str | None:
     return None
 
 
+def _without_source_directory(relative: str) -> str:
+    if relative.startswith("src/"):
+        return relative[4:]
+    return relative.split("/src/", 1)[-1]
+
+
 def namespace_from_path(path: str, source_root: str | None) -> str:
     relative = path.replace("\\", "/")
     root = (source_root or "").replace("\\", "/").rstrip("/")
-    if root and root not in {".", ""} and relative.startswith(root + "/"):
+    if root not in {".", ""} and relative.startswith(root + "/"):
         relative = relative[len(root) + 1 :]
-    if relative.startswith("src/"):
-        relative = relative[4:]
-    elif "/src/" in relative:
-        relative = relative.split("/src/", 1)[1]
+    relative = _without_source_directory(relative)
     relative = re.sub(r"\.(?:clj[cs]?|bb)$", "", relative)
     return relative.replace("/", ".").replace("_", "-")
 

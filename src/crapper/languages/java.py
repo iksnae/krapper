@@ -85,33 +85,33 @@ def _qualify(package: str | None, names: list[str], nested: str) -> str:
     return body
 
 
+def _record_method(data: bytes, node, package: str, path: str) -> Function | None:
+    if child_of_type(node, "block") is None:
+        return None
+    ident = child_of_type(node, "identifier")
+    names = _type_chain(data, node)
+    if ident is None or not names:
+        return None
+    return Function(name=node_text(data, ident), namespace=_qualify(package, names, "."),
+                    complexity=complexity(node, _is_decision, _skip),
+                    start_line=start_line(node), end_line=end_line(node),
+                    path=path, language="java", jacoco_class=_qualify(package, names, "$"))
+
+
 def functions_in_source(
     source: str, path: str, project_root: str | None = None
 ) -> list[Function]:
     del project_root
     data, tree = parse(source, "java")
     package = _package_name(source)
-    found: list[Function] = []
+    found = []
     stack = [tree.root_node]
     while stack:
         node = stack.pop()
         if node.type == "method_declaration" and not _inside_executable(node):
-            if child_of_type(node, "block") is not None:
-                ident = child_of_type(node, "identifier")
-                names = _type_chain(data, node)
-                if ident is not None and names:
-                    found.append(
-                        Function(
-                            name=node_text(data, ident),
-                            namespace=_qualify(package, names, "."),
-                            complexity=complexity(node, _is_decision, _skip),
-                            start_line=start_line(node),
-                            end_line=end_line(node),
-                            path=path,
-                            language="java",
-                            jacoco_class=_qualify(package, names, "$"),
-                        )
-                    )
+            recorded = _record_method(data, node, package, path)
+            if recorded is not None:
+                found.append(recorded)
             continue
         stack.extend(reversed(node.children))
     return found

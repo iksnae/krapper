@@ -11,6 +11,8 @@ uml-viewer class key. `.js`, `.mjs`, `.cjs`, and `.jsx` use the JavaScript
 grammar and these same rules.
 """
 
+from functools import partial
+
 from crapper.languages.treesitter import (
     binary_logic,
     child_of_type,
@@ -60,17 +62,20 @@ _CALLBACKS = {"arrow_function", "function_expression"}
 _JS_SUFFIXES = (".jsx", ".mjs", ".cjs", ".js")
 
 
-def _is_decision(node) -> bool:
-    if node.type in _DECISIONS or binary_logic(node):
-        return True
-    if node.type == "binary_expression" and any(child.type == "??" for child in node.children):
-        return True
-    # `a?.b` and `a?.[0]` wrap `?.` in optional_chain. `a?.()` is a bare `?.`
-    # in TypeScript and an optional_chain in JavaScript. Count the wrapper
-    # once, and a bare token only when nothing wraps it.
+def _nullish_decision(node) -> bool:
+    return node.type == "binary_expression" and any(child.type == "??" for child in node.children)
+
+
+def _optional_chain_decision(node) -> bool:
+    # The wrapper owns its token; TypeScript also allows an unwrapped ?. call.
     if node.type == "optional_chain":
         return True
-    return node.type == "?." and (node.parent is None or node.parent.type != "optional_chain")
+    return node.type == "?." and getattr(node.parent, "type", None) != "optional_chain"
+
+
+def _is_decision(node) -> bool:
+    return (node.type in _DECISIONS or binary_logic(node)
+            or _nullish_decision(node) or _optional_chain_decision(node))
 
 
 def _skip(node) -> bool:
@@ -178,27 +183,35 @@ def _route_method(data: bytes, call) -> str | None:
     return None
 
 
-def _literal_text(data: bytes, node) -> str | None:
-    if node.type == "string":
-        return "".join(
-            node_text(data, child) for child in node.children if child.type == "string_fragment"
-        )
-    if node.type == "template_string":
-        text = node_text(data, node)
-        if len(text) >= 2 and text[0] == "`" and text[-1] == "`":
-            return text[1:-1]
+def _template_text(text: str) -> str | None:
+    if len(text) >= 2 and text.startswith("`") and text.endswith("`"):
+        return text[1:-1]
     return None
 
 
-def _string_argument(data: bytes, call) -> str | None:
+def _literal_text(data: bytes, node) -> str | None:
+    if node.type == "string":
+        return "".join(node_text(data, child) for child in node.children if child.type == "string_fragment")
+    if node.type == "template_string":
+        return _template_text(node_text(data, node))
+    return None
+
+
+def _argument_expressions(call) -> list:
     arguments = child_of_type(call, "arguments")
     if arguments is None:
-        return None
+        return []
+    found = []
     for child in arguments.children:
-        expr = _expression(child)
-        if expr is None:
-            continue
-        text = _literal_text(data, expr)
+        expression = _expression(child)
+        if expression is not None:
+            found.append(expression)
+    return found
+
+
+def _string_argument(data: bytes, call) -> str | None:
+    for expression in _argument_expressions(call):
+        text = _literal_text(data, expression)
         if text is not None:
             return text
     return None
@@ -210,7 +223,7 @@ def _path_from_route(data: bytes, node) -> str | None:
     current = node
     while current is not None:
         if current.type == "member_expression":
-            current = current.children[0] if current.children else None
+            current = next(iter(current.children), None)
             continue
         if current.type != "call_expression":
             return None
@@ -222,40 +235,34 @@ def _path_from_route(data: bytes, node) -> str | None:
 
 
 def _callbacks(call) -> list:
-    arguments = child_of_type(call, "arguments")
-    if arguments is None:
-        return []
-    found = []
-    for child in arguments.children:
-        expr = _expression(child)
-        if expr is not None and expr.type in _CALLBACKS:
-            found.append(expr)
-    return found
+    return [expression for expression in _argument_expressions(call) if expression.type in _CALLBACKS]
+
+
+def _unwrapped_parent(node):
+    current = node.parent
+    while current is not None and current.type == "parenthesized_expression":
+        current = current.parent
+    return current
 
 
 def _is_route_callback(data: bytes, node) -> bool:
     if node.type not in _CALLBACKS:
         return False
-    current = node.parent
-    while current is not None and current.type == "parenthesized_expression":
-        current = current.parent
-    if current is None or current.type != "arguments":
+    arguments = _unwrapped_parent(node)
+    if getattr(arguments, "type", None) != "arguments":
         return False
-    call = current.parent
-    if call is None or call.type != "call_expression":
+    call = arguments.parent
+    return getattr(call, "type", None) == "call_expression" and _route_method(data, call) is not None
+
+
+def _skip_outside_root(data: bytes, root_id: int, current) -> bool:
+    if current.id == root_id:
         return False
-    return _route_method(data, call) is not None
+    return _skip(current) or _is_route_callback(data, current)
 
 
 def _complexity(data: bytes, node) -> int:
-    root_id = node.id
-
-    def skip(current) -> bool:
-        if current.id == root_id:
-            return False
-        return _skip(current) or _is_route_callback(data, current)
-
-    return complexity(node, _is_decision, skip)
+    return complexity(node, _is_decision, partial(_skip_outside_root, data, node.id))
 
 
 def _append(found: list, node, **kwargs) -> None:
@@ -306,27 +313,23 @@ def _append_method(found, data, node, module, path) -> None:
     )
 
 
+def _append_arrow(found, data, declarator, module, path) -> None:
+    if declarator.type != "variable_declarator":
+        return
+    ident = child_of_type(declarator, "identifier")
+    value = child_of_type(declarator, "arrow_function", "function_expression")
+    if ident is None or value is None:
+        return
+    _append(found, declarator, name=node_text(data, ident), namespace=module,
+            complexity=_complexity(data, value), start_line=start_line(declarator),
+            end_line=end_line(declarator), path=path, language="typescript")
+
+
 def _append_arrows(found, data, node, module, path) -> None:
     if _inside_function(node):
         return
     for declarator in node.children:
-        if declarator.type != "variable_declarator":
-            continue
-        ident = child_of_type(declarator, "identifier")
-        value = child_of_type(declarator, "arrow_function", "function_expression")
-        if ident is None or value is None:
-            continue
-        _append(
-            found,
-            declarator,
-            name=node_text(data, ident),
-            namespace=module,
-            complexity=_complexity(data, value),
-            start_line=start_line(declarator),
-            end_line=end_line(declarator),
-            path=path,
-            language="typescript",
-        )
+        _append_arrow(found, data, declarator, module, path)
 
 
 def _route_label(method: str, path: str | None) -> str:
@@ -352,13 +355,8 @@ def _collect_routes(routes: list, data: bytes, call) -> None:
     method = _route_method(data, call)
     if method is None:
         return
-    callbacks = _callbacks(call)
-    if not callbacks:
-        return
-    route = _string_argument(data, call)
-    if not route:
-        route = _path_from_route(data, _call_callee(call))
-    for callback in callbacks:
+    route = _string_argument(data, call) or _path_from_route(data, _call_callee(call))
+    for callback in _callbacks(call):
         routes.append((callback.start_byte, callback, method, route))
 
 
@@ -385,13 +383,12 @@ def functions_in_source(
     module = _module_namespace(path, source_root)
     found: list[tuple[int, Function]] = []
     routes: list[tuple[int, object, str, str | None]] = []
+    appenders = {"function_declaration": _append_function,
+                 "method_definition": _append_method, "lexical_declaration": _append_arrows}
     for node in descendants(tree.root_node):
-        if node.type == "function_declaration":
-            _append_function(found, data, node, module, path)
-        elif node.type == "method_definition":
-            _append_method(found, data, node, module, path)
-        elif node.type == "lexical_declaration":
-            _append_arrows(found, data, node, module, path)
+        appender = appenders.get(node.type)
+        if appender is not None:
+            appender(found, data, node, module, path)
         elif node.type == "call_expression":
             _collect_routes(routes, data, node)
     _append_routes(found, routes, data, module, path)

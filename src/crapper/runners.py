@@ -1,7 +1,7 @@
 """Run each language's coverage tool, then leave the reports for the loader.
 
 Failures are reported and do not stop analysis. A language with no coverage
-tool, or a failed run, scores its functions at 0%.
+tool may have unavailable measurements; a failed run is not coverage evidence.
 """
 
 from __future__ import annotations
@@ -57,12 +57,12 @@ def run_shell(command: str | list[str], cwd: Path) -> int:
 def nearest_marker(start: Path, marker: str, stop: Path) -> Path | None:
     current = start if start.is_dir() else start.parent
     stop = stop.resolve()
-    while True:
-        if (current / marker).is_file():
-            return current
-        if current == stop or current.parent == current:
+    for directory in (current, *current.parents):
+        if (directory / marker).is_file():
+            return directory
+        if directory == stop:
             return None
-        current = current.parent
+    return None
 
 
 def _clean_dir(path: Path) -> None:
@@ -169,13 +169,17 @@ def _manifest_snapshot(package: Path) -> dict[Path, bytes | None]:
     return snapshot
 
 
+def _restore_manifest(path: Path, content: bytes | None) -> None:
+    if content is None:
+        if path.is_file():
+            path.unlink()
+    elif not path.is_file() or path.read_bytes() != content:
+        path.write_bytes(content)
+
+
 def _restore_manifests(snapshot: dict[Path, bytes | None]) -> None:
     for path, content in snapshot.items():
-        if content is None:
-            if path.is_file():
-                path.unlink()
-        elif not path.is_file() or path.read_bytes() != content:
-            path.write_bytes(content)
+        _restore_manifest(path, content)
 
 
 def _ensure_vitest_coverage(package: Path) -> bool:
@@ -199,7 +203,7 @@ def _ensure_vitest_coverage(package: Path) -> bool:
         _restore_manifests(snapshot)
     ready = code == 0 and (package / "node_modules" / "@vitest" / "coverage-v8").is_dir()
     if not ready:
-        _warn("Vitest's coverage provider is missing. TypeScript coverage will score 0%.")
+        _warn("Vitest's coverage provider is missing. TypeScript coverage may be unavailable.")
     return ready
 
 
@@ -215,17 +219,22 @@ def typescript_packages(root: Path, files: list[Path]) -> list[Path]:
     return sorted(packages)
 
 
+def _package_scripts(package: Path) -> dict | None:
+    data = _package_json(package)
+    if data is None:
+        return None
+    scripts = data.get("scripts")
+    return scripts if isinstance(scripts, dict) else {}
+
+
 def typescript_command(
     package: Path, files: list[Path], report_dir: Path
 ) -> list[str] | None:
     """Argument vector that writes LCOV into `report_dir`, or None when there is no test script."""
 
-    data = _package_json(package)
-    if data is None:
+    scripts = _package_scripts(package)
+    if scripts is None:
         return None
-    scripts = data.get("scripts") or {}
-    if not isinstance(scripts, dict):
-        scripts = {}
     if "coverage" in scripts:
         return ["npm", "run", "coverage"]
     if _uses_vitest(package, scripts):
@@ -242,6 +251,7 @@ def typescript_command(
         "npm",
         "test",
     ]
+
 
 
 def _vitest_includes(package: Path, files: list[Path]) -> list[str]:
@@ -295,38 +305,43 @@ def rust_modules(root: Path, files: list[Path]) -> list[Path]:
     ]
 
 
-def _rust_kind() -> str | None:
-    if shutil.which("cargo-llvm-cov"):
-        return "llvm-cov"
-    if shutil.which("cargo-tarpaulin"):
-        return "tarpaulin"
-    _warn("Neither cargo-llvm-cov nor cargo-tarpaulin is installed. Installing cargo-llvm-cov.")
+def _install_llvm_tools() -> None:
     if shutil.which("rustup"):
         code = run_shell(["rustup", "component", "add", "llvm-tools-preview"], Path.home())
         if code != 0:
             _warn("rustup component add llvm-tools-preview failed.")
+
+
+def _rust_kind() -> str | None:
+    for binary, kind in (("cargo-llvm-cov", "llvm-cov"), ("cargo-tarpaulin", "tarpaulin")):
+        if shutil.which(binary):
+            return kind
+    _warn("Neither cargo-llvm-cov nor cargo-tarpaulin is installed. Installing cargo-llvm-cov.")
+    _install_llvm_tools()
     code = run_shell(["cargo", "install", "cargo-llvm-cov", "--locked"], Path.home())
     if code == 0 and shutil.which("cargo-llvm-cov"):
         return "llvm-cov"
-    _warn("Rust coverage will score 0%.")
+    _warn("Rust coverage may be unavailable.")
     return None
 
 
 _PYTHON_MARKERS = ("pyproject.toml", "setup.cfg", "setup.py", "pytest.ini", "tox.ini")
 
 
+def _python_project_root(file: Path, root: Path) -> Path:
+    for marker in _PYTHON_MARKERS:
+        module = nearest_marker(file, marker, root)
+        if module is not None:
+            return module
+    return root
+
+
 def python_roots(root: Path, files: list[Path]) -> list[Path]:
-    found: set[Path] = set()
+    found = set()
     root = root.resolve()
     for file in files:
-        if Path(file).suffix != ".py":
-            continue
-        module = None
-        for marker in _PYTHON_MARKERS:
-            module = nearest_marker(Path(file), marker, root)
-            if module is not None:
-                break
-        found.add((module or root).resolve())
+        if Path(file).suffix == ".py":
+            found.add(_python_project_root(Path(file), root).resolve())
     return sorted(found)
 
 
@@ -338,14 +353,14 @@ def _python_executable(package: Path) -> str:
     return "python3"
 
 
+def _pytest_config_contains(path: Path) -> bool:
+    return path.is_file() and "pytest" in path.read_text(encoding="utf-8", errors="replace")
+
+
 def uses_pytest(package: Path) -> bool:
-    if (package / "pytest.ini").is_file() or (package / "conftest.py").is_file():
+    if any((package / name).is_file() for name in ("pytest.ini", "conftest.py")):
         return True
-    for name in ("pyproject.toml", "setup.cfg", "tox.ini"):
-        path = package / name
-        if path.is_file() and "pytest" in path.read_text(encoding="utf-8", errors="replace"):
-            return True
-    return False
+    return any(_pytest_config_contains(package / name) for name in ("pyproject.toml", "setup.cfg", "tox.ini"))
 
 
 def python_sources(package: Path, files: list[Path]) -> str:
@@ -437,7 +452,7 @@ def _cover_clojure(root: Path) -> None:
         _warn("clj -M:cov --lcov failed; retrying without --lcov.")
         code = run_shell(["clj", "-M:cov"], root)
     if code != 0:
-        _warn(f"Clojure coverage exited {code}. Clojure coverage will score 0%.")
+        _warn(f"Clojure coverage exited {code}. Clojure coverage may be unavailable.")
 
 
 def _cover_java(root: Path, files: list[Path]) -> None:
@@ -452,7 +467,7 @@ def _cover_java(root: Path, files: list[Path]) -> None:
             exec_file.unlink()
         code = run_shell(_MAVEN, module)
         if code != 0:
-            _warn(f"Java coverage exited {code} in {module}. Java coverage will score 0%.")
+            _warn(f"Java coverage exited {code} in {module}. Java coverage may be unavailable.")
 
 
 def _cover_go(root: Path, files: list[Path]) -> None:
@@ -467,7 +482,7 @@ def _cover_go(root: Path, files: list[Path]) -> None:
             profile.unlink()
         code = run_shell(["go", "test", "./...", f"-coverprofile={profile}"], module)
         if code != 0:
-            _warn(f"Go coverage exited {code} in {module}. Go coverage will score 0%.")
+            _warn(f"Go coverage exited {code} in {module}. Go coverage may be unavailable.")
 
 
 def _prepare_report(report: Path) -> None:
@@ -476,27 +491,37 @@ def _prepare_report(report: Path) -> None:
     report.parent.mkdir(parents=True, exist_ok=True)
 
 
+def _prepared_typescript_command(package: Path, files: list[Path], report: Path):
+    try:
+        command = typescript_command(package, files, report.parent)
+    except PackageJsonError as exc:
+        _warn(str(exc))
+        return None
+    if command is None:
+        _warn(f"No package.json test script in {package}; skipping TypeScript coverage.")
+        return None
+    if _needs_vitest_provider(command) and not _ensure_vitest_coverage(package):
+        return None
+    return command
+
+
+def _cover_typescript_package(root: Path, package: Path, files: list[Path]) -> None:
+    report = _coverage_report(root, package, "typescript")
+    command = _prepared_typescript_command(package, files, report)
+    if command is None:
+        return
+    _prepare_report(report)
+    code = run_shell(command, package)
+    if code != 0:
+        _warn(f"TypeScript coverage exited {code} in {package}. TypeScript coverage may be unavailable.")
+
+
 def _cover_typescript(root: Path, files: list[Path]) -> None:
     packages = typescript_packages(root, files)
     if not packages:
         _warn("No package.json; skipping TypeScript coverage.")
-        return
     for package in packages:
-        report = _coverage_report(root, package, "typescript")
-        try:
-            command = typescript_command(package, files, report.parent)
-        except PackageJsonError as exc:
-            _warn(str(exc))
-            continue
-        if command is None:
-            _warn(f"No package.json test script in {package}; skipping TypeScript coverage.")
-            continue
-        if _needs_vitest_provider(command) and not _ensure_vitest_coverage(package):
-            continue
-        _prepare_report(report)
-        code = run_shell(command, package)
-        if code != 0:
-            _warn(f"TypeScript coverage exited {code} in {package}. TypeScript coverage will score 0%.")
+        _cover_typescript_package(root, package, files)
 
 
 def _needs_vitest_provider(command: list[str]) -> bool:
@@ -519,11 +544,11 @@ def _record_python_lcov(
 ) -> None:
     if not data_file.exists():
         if code != 0:
-            _warn(f"Python coverage exited {code} in {package}. Python coverage will score 0%.")
+            _warn(f"Python coverage exited {code} in {package}. Python coverage may be unavailable.")
         return
     lcov_code = run_shell(lcov_cmd, package)
     if lcov_code != 0:
-        _warn(f"coverage lcov exited {lcov_code} in {package}. Python coverage will score 0%.")
+        _warn(f"coverage lcov exited {lcov_code} in {package}. Python coverage may be unavailable.")
     elif code != 0:
         _warn(f"Python tests exited {code} in {package}. Coverage was still recorded.")
 
@@ -533,7 +558,7 @@ def _cover_python(root: Path, files: list[Path]) -> None:
         report = _coverage_report(root, package, "python")
         py = _python_executable(package)
         if not _ensure_python_module(py, package, "coverage"):
-            _warn(f"coverage is missing in {package}. Python coverage will score 0%.")
+            _warn(f"coverage is missing in {package}. Python coverage may be unavailable.")
             continue
         report.parent.mkdir(parents=True, exist_ok=True)
         data_file = report.parent / ".coverage"
@@ -559,7 +584,7 @@ def _cover_rust(root: Path, files: list[Path]) -> None:
         report.unlink(missing_ok=True)
         code = run_shell(rust_coverage_command(kind, report), module)
         if code != 0:
-            _warn(f"Rust coverage exited {code} in {module}. Rust coverage will score 0%.")
+            _warn(f"Rust coverage exited {code} in {module}. Rust coverage may be unavailable.")
 
 
 def run_coverage(root: Path, files: list[Path], command: str | None) -> int:
@@ -567,7 +592,7 @@ def run_coverage(root: Path, files: list[Path], command: str | None) -> int:
 
     Returns the custom command's status. A non-zero status means the caller
     must not read reports already on disk. Per-language runs return 0; a
-    failed tool is reported and that language scores 0% when it wrote nothing.
+    failed tool is reported; absent measurements stay unavailable.
     """
 
     root = root.resolve()
@@ -581,16 +606,13 @@ def run_coverage(root: Path, files: list[Path], command: str | None) -> int:
         return code
 
     languages = _languages_in(files)
-    if "clojure" in languages:
-        _cover_clojure(root)
-    if "java" in languages:
-        _cover_java(root, files)
-    if "go" in languages:
-        _cover_go(root, files)
-    if "typescript" in languages:
-        _cover_typescript(root, files)
-    if "python" in languages:
-        _cover_python(root, files)
-    if "rust" in languages:
-        _cover_rust(root, files)
+    runners = {"clojure": (_cover_clojure, (root,)),
+               "java": (_cover_java, (root, files)),
+               "go": (_cover_go, (root, files)),
+               "typescript": (_cover_typescript, (root, files)),
+               "python": (_cover_python, (root, files)),
+               "rust": (_cover_rust, (root, files))}
+    for language, (runner, arguments) in runners.items():
+        if language in languages:
+            runner(*arguments)
     return 0
