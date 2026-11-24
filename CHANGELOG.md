@@ -1,5 +1,16 @@
 # Changelog
 
+## [Unreleased]
+
+### Changed
+
+- **Behavior change:** directories named `build`, `coverage`, `dist`, `out` or `target` are no longer skipped at any depth. They are skipped as build output only when git ignores them or they sit directly under the project root; anywhere else they are source. Packages such as `internal/coverage/` are now scored and bound into coverage receipts, so reports gain entries and a `--threshold` gate can change result. Nested output directories that git does not ignore are scored too; add them to `.gitignore`. Outside a git checkout the old any-depth rule applies.
+- A warning lists directories skipped by name alone that hold source files.
+
+### Fixed
+
+- Coverage receipts did not bind source in packages named like output directories, so edits there left a receipt valid.
+
 ## [0.2.1] - 2026-11-24
 
 ### Added

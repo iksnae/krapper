@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from tempfile import NamedTemporaryFile
 from pathlib import Path
 
-from crapper.discover import SKIP_DIRS
+from crapper.discover import SkipRule
 
 RECEIPT = Path('.metrics/coverage-receipt.json')
 DESCRIPTION = Path('target/coverage/swift-package.json')
@@ -44,10 +44,12 @@ def _is_input_file(path: Path, reports: set[Path]) -> bool:
 
 def inputs(root: Path) -> dict[str, str]:
     """Bind source, tests, manifests and configuration, not generated output."""
+    root = root.resolve()
+    rule = SkipRule.for_project(root)
     reports = set(report_paths(root))
     paths = []
     for folder, dirs, names in os.walk(root):
-        dirs[:] = [d for d in dirs if d not in SKIP_DIRS]
+        dirs[:] = [d for d in dirs if not rule.skips(Path(folder), d)]
         for name in names:
             path = Path(folder) / name
             if _is_input_file(path, reports):

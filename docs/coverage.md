@@ -47,6 +47,7 @@ The Swift reader was adapted from [felipearpa's upstream contribution](https://g
 - Svelte components are scored through their top-level `<script>` blocks only. Markup (`{#if}` blocks, inline handlers) and callbacks passed to `$effect`, `$derived.by` or `$:` statements have no entry. Instance-script functions are covered only when a test mounts the component.
 - Unsupported files and top-level code without a function entry are not scored. Overloads can share namespace/name keys in EDN output.
 - Test/build/dependency paths are excluded by default; `krapper --help` lists the rules. Explicitly naming a test file includes it.
+- Directories named `build`, `coverage`, `dist`, `out` or `target` are skipped as build output only when git ignores them or they sit directly under the project root; elsewhere they are source. Add nested output directories to `.gitignore`, or they are scored and bound into the receipt. Outside a git checkout these names are skipped at any depth. Krapper warns when a directory skipped by name alone holds source files. Git's answer stops at submodules and nested repositories: an output directory inside one is scored unless the outer repository ignores it.
 - Raw Python parser/coverage APIs do not enforce provenance. Only the CLI does.
 
 [Back to usage](../README.md)
