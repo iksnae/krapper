@@ -1,6 +1,6 @@
 [project]
 name = "krapper"
-version = "0.2.1"
+version = "0.3.0"
 description = "Function-level CRAP scores for Swift, Go, Rust, TypeScript and more."
 readme = "README.md"
 license = { file = "LICENSE" }

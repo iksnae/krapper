@@ -1,10 +1,24 @@
 # Changelog
 
-## [Unreleased]
+## [0.3.0] - 2026-11-24
+
+### Added
+
+- Each `.metrics/crap.edn` entry has `:file` (path relative to `--root`) and `:line` (first line of the function), after the existing keys. Entries that share `:namespace` and `:name` can now be told apart.
+
+### Changed
+
+- **Behavior change:** directories named `build`, `coverage`, `dist`, `out` or `target` are no longer skipped at any depth. They are skipped as build output only when git ignores them or they sit directly under the project root; anywhere else they are source. Packages such as `internal/coverage/` are now scored and bound into coverage receipts, so reports gain entries and a `--threshold` gate can change result. Nested output directories that git does not ignore are scored too; add them to `.gitignore`. Outside a git checkout the old any-depth rule applies.
+- A warning lists directories skipped by name alone that hold source files.
 
 ### Fixed
 
+- Coverage receipts did not bind source in packages named like output directories, so edits there left a receipt valid.
 - A `Package.swift` below `--root` no longer fails every strict coverage run. A package at the root is verified as before. Functions in a nested package are reported N/A in strict runs, even when a report covers them, and a notice names the package.
+
+### Migration notes
+
+Receipts sealed by 0.2.x can fail verification under 0.3.0, because the set of bound inputs changed. Re-run your coverage command.
 
 ## [0.2.1] - 2026-11-24
 
