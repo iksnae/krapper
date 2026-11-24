@@ -13,6 +13,7 @@ grammar and these same rules.
 
 from functools import partial
 
+from crapper.languages.svelte import component_script
 from crapper.languages.treesitter import (
     binary_logic,
     child_of_type,
@@ -90,6 +91,14 @@ def _grammar(path: str) -> str:
     return "typescript"
 
 
+def _script(source: str, path: str) -> tuple[str, str]:
+    """Source text to parse and the grammar that reads it."""
+
+    if path.endswith(".svelte"):
+        return component_script(source)
+    return source, _grammar(path)
+
+
 def _strip_root_prefix(relative: str, source_root: str | None) -> str:
     root = (source_root or "").replace("\\", "/").rstrip("/")
     if root not in {"", "."} and relative.startswith(root + "/"):
@@ -108,7 +117,7 @@ def _strip_src_dir(relative: str) -> str:
 
 
 def _strip_script_suffix(relative: str) -> str:
-    for suffix in (".tsx", ".mts", ".cts", ".jsx", ".mjs", ".cjs", ".ts", ".js"):
+    for suffix in (".tsx", ".mts", ".cts", ".jsx", ".mjs", ".cjs", ".ts", ".js", ".svelte"):
         if relative.endswith(suffix):
             return relative[: -len(suffix)]
     return relative
@@ -379,7 +388,7 @@ def _append_routes(found, routes, data, module, path) -> None:
 def functions_in_source(
     source: str, path: str, source_root: str | None = None
 ) -> list[Function]:
-    data, tree = parse(source, _grammar(path))
+    data, tree = parse(*_script(source, path))
     module = _module_namespace(path, source_root)
     found: list[tuple[int, Function]] = []
     routes: list[tuple[int, object, str, str | None]] = []

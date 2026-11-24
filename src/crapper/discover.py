@@ -19,6 +19,7 @@ EXTENSIONS = {
     ".jsx": "typescript",
     ".mjs": "typescript",
     ".cjs": "typescript",
+    ".svelte": "typescript",
     ".rs": "rust",
     ".swift": "swift",
     ".py": "python",
@@ -70,6 +71,8 @@ JS_TEST_SUFFIXES = (
     ".spec.mjs",
     ".test.cjs",
     ".spec.cjs",
+    ".test.svelte",
+    ".spec.svelte",
 )
 
 
