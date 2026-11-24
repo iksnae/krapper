@@ -92,7 +92,8 @@ Coverage formats (generate separately; default analysis executes no tools):
   Python       coverage.py LCOV, via pytest or unittest, per project
   Swift        SwiftPM LLVM JSON in target/coverage/swift/*.json, or LCOV
 
-uml-viewer joins .metrics/crap.edn on :namespace and :name.
+uml-viewer joins .metrics/crap.edn on :namespace and :name. Each entry also
+has :file (relative to --root) and :line, the function's first line.
   Clojure      the ns, and the defn name
   Java         package.Class, and the method name
   Go           import path, or import.path.Receiver for methods
