@@ -458,6 +458,8 @@ class CoverageBundle:
     form_html: dict[str, dict[int, tuple[int, int]]] = field(default_factory=dict)
     source_parts: list[tuple[str, ...]] = field(default_factory=list)
     root: Path | None = None
+    # Directories of Swift packages whose coverage was not verified. Their functions get no percentage.
+    unverified_swift: tuple[str, ...] = ()
 
     def bind_sources(self, paths: list[str]) -> None:
         """Remember project files so a short path cannot take a longer file's report."""
@@ -465,7 +467,14 @@ class CoverageBundle:
         parts = [tuple(_segments(candidate)) for source in paths for candidate in _candidates(source)]
         self.source_parts = list(dict.fromkeys(filter(None, parts)))
 
+    def _unverified(self, function: Function) -> bool:
+        if function.language != "swift":
+            return False
+        return any(function.path.startswith(package + "/") for package in self.unverified_swift)
+
     def percent_for(self, function: Function) -> float | None:
+        if self._unverified(function):
+            return None
         if function.language == "java":
             return self._java_percent(function)
         if function.language == "go":

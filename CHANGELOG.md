@@ -2,9 +2,9 @@
 
 ## [Unreleased]
 
-### Added
+### Fixed
 
-- Each `.metrics/crap.edn` entry has `:file` (path relative to `--root`) and `:line` (first line of the function), after the existing keys. Entries that share `:namespace` and `:name` can now be told apart.
+- A `Package.swift` below `--root` no longer fails every strict coverage run. A package at the root is verified as before. Functions in a nested package are reported N/A in strict runs, even when a report covers them, and a notice names the package.
 
 ## [0.2.1] - 2026-11-24
 

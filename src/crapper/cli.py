@@ -23,7 +23,15 @@ from crapper.discover import (
     iter_source_files,
     language_of,
 )
-from crapper.integrity import CoverageIntegrityError, begin_coverage, inputs, invalidate, seal, verify
+from crapper.integrity import (
+    CoverageIntegrityError,
+    begin_coverage,
+    inputs,
+    invalidate,
+    seal,
+    unverified_swift_packages,
+    verify,
+)
 from crapper.metrics import write_metrics
 from crapper.report import format_report
 from crapper.runners import run_coverage
@@ -326,6 +334,19 @@ def _require_bound_sources(root: Path, files: list[Path]) -> None:
         raise CoverageIntegrityError('Selected sources are excluded from receipt inputs.')
 
 
+def _verified_bundle(root: Path):
+    """Coverage for a strict run. Swift packages below the root stay unscored."""
+
+    bundle = load_bundle(root)
+    bundle.unverified_swift = tuple(unverified_swift_packages(root))
+    for package in bundle.unverified_swift:
+        print(
+            f"Swift package {package} is not at --root; its coverage is not verified and its functions are N/A.",
+            file=sys.stderr,
+        )
+    return bundle
+
+
 def _coverage_bundle(options: Options, root: Path, files: list[Path]):
     if options.no_coverage:
         return None
@@ -339,7 +360,7 @@ def _coverage_bundle(options: Options, root: Path, files: list[Path]):
         _require_internal_sources(root, files)
         verify(root)
     _require_bound_sources(root, files)
-    return load_bundle(root)
+    return _verified_bundle(root)
 
 def _threshold_status(options: Options, entries) -> int:
     if options.threshold is None:

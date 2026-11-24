@@ -31,7 +31,7 @@ For multiple modules, keep reports under the analyzed root with unambiguous sour
 
 ## Swift packages
 
-Strict mode supports one Swift package at `--root`. Your coverage command must produce:
+Strict mode verifies one Swift package, at `--root`. A Swift package below the root does not block the run: Krapper names it on stderr, leaves its functions N/A even when a report covers them, and scores the other languages. Those N/A entries fail a `--threshold` run unless you limit the run to other paths. For the package at `--root`, your coverage command must produce:
 
 - `target/coverage/swift-package.json`: output of `swift package describe --type json`.
 - `target/coverage/swift/*.json`: LLVM exports containing test-source records from **every declared test target**, with paths inside this checkout.
