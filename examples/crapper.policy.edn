@@ -1,3 +1,4 @@
+;; Historical upstream crapper policy, not Krapper's current architecture.
 {:title "Crapper"
  :prefix "crapper"
  :lang :python
