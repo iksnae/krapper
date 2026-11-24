@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- Each `.metrics/crap.edn` entry has `:file` (path relative to `--root`) and `:line` (first line of the function), after the existing keys. Entries that share `:namespace` and `:name` can now be told apart.
+
 ## [0.2.1] - 2026-11-24
 
 ### Added
