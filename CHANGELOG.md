@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.2.1] - 2026-11-24
+
+### Added
+
+- Svelte components (`.svelte`): functions in the instance and module `<script>` blocks are scored with the TypeScript/JavaScript rules, under the component's module path (`src/lib/Widget.svelte` is `lib.Widget`), and matched to Vitest LCOV by their lines in the component. `*.test.svelte` and `*.spec.svelte` are treated as tests. Markup and rune callbacks are not scored.
+
 ## [0.2.0] - 2026-11-23
 
 First published Krapper release, derived from unclebob/crapper under 0BSD.

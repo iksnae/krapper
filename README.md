@@ -1,6 +1,6 @@
 # Krapper
 
-Find complex, under-tested functions in Swift, Go, Rust and TypeScript. Clojure, Java, JavaScript and Python are also supported.
+Find complex, under-tested functions in Swift, Go, Rust and TypeScript. Clojure, Java, JavaScript, Python and Svelte component scripts are also supported.
 
 ## Install
 
