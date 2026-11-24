@@ -30,3 +30,5 @@ class Entry:
     crap: float | None
     path: str
     language: str
+    # First line of the function in `path`. None when the reader did not record it.
+    line: int | None = None

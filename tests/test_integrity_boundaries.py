@@ -6,12 +6,9 @@ from conftest import mark_reports_fresh
 from crapper.integrity import CoverageIntegrityError, RECEIPT, inputs, seal, verify
 
 
-@pytest.mark.parametrize('case', ['nested-package', 'no-targets', 'no-export', 'invalid-export', 'external-source', 'relative-source', 'external-target', 'empty-segments'])
+@pytest.mark.parametrize('case', ['no-targets', 'no-export', 'invalid-export', 'external-source', 'relative-source', 'external-target', 'empty-segments'])
 def test_invalid_swift_evidence_refuses_receipt(tmp_path, case):
     (tmp_path/'Package.swift').write_text('// package fixture')
-    if case == 'nested-package':
-        (tmp_path/'nested').mkdir()
-        (tmp_path/'nested/Package.swift').write_text('// nested fixture')
     folder = tmp_path/'target/coverage/swift'
     folder.mkdir(parents=True)
     target = {'name':'DemoTests', 'type':'test', 'path':'Tests/DemoTests'}

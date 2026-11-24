@@ -15,18 +15,29 @@ from crapper.discover import (
     CLOJURE_TEST_SUFFIXES,
     GO_TEST_SUFFIX,
     JS_TEST_SUFFIXES,
-    SKIP_DIRS,
+    ALWAYS_SKIP_DIRS,
+    OUTPUT_DIRS,
     TEST_DIRS,
+    SkipRule,
     is_test_file,
     iter_source_files,
     language_of,
 )
-from crapper.integrity import CoverageIntegrityError, begin_coverage, inputs, invalidate, seal, verify
+from crapper.integrity import (
+    CoverageIntegrityError,
+    begin_coverage,
+    inputs,
+    invalidate,
+    seal,
+    unverified_swift_packages,
+    verify,
+)
 from crapper.metrics import write_metrics
 from crapper.report import format_report
 from crapper.runners import run_coverage
 
-_SKIPPED_DIRS = ", ".join(sorted(SKIP_DIRS | TEST_DIRS))
+_SKIPPED_DIRS = ", ".join(sorted(ALWAYS_SKIP_DIRS | TEST_DIRS))
+_OUTPUT_DIRS = ", ".join(sorted(OUTPUT_DIRS))
 _TEST_PATTERNS = ", ".join(
     [
         f"*{GO_TEST_SUFFIX}",
@@ -72,7 +83,13 @@ Arguments:
                     path contains this text are analyzed.
 
 With no paths, source files under the project root are analyzed. Directories
-named {_SKIPPED_DIRS} are skipped, as are {_TEST_PATTERNS}.
+named {_SKIPPED_DIRS} are skipped at any depth, as are {_TEST_PATTERNS}.
+
+Directories named {_OUTPUT_DIRS} are skipped as build output
+only when git ignores them or they sit directly under the project root.
+Anywhere else they are source and are scored. Outside a git checkout they are
+skipped at any depth. A warning lists each one skipped by name alone that
+holds source files; name the directory to score it.
 
 Coverage formats (generate separately; default analysis executes no tools):
   Clojure      clj -M:cov --lcov, then Cloverage form counts or LCOV
@@ -83,7 +100,8 @@ Coverage formats (generate separately; default analysis executes no tools):
   Python       coverage.py LCOV, via pytest or unittest, per project
   Swift        SwiftPM LLVM JSON in target/coverage/swift/*.json, or LCOV
 
-uml-viewer joins .metrics/crap.edn on :namespace and :name.
+uml-viewer joins .metrics/crap.edn on :namespace and :name. Each entry also
+has :file (relative to --root) and :line, the function's first line.
   Clojure      the ns, and the defn name
   Java         package.Class, and the method name
   Go           import path, or import.path.Receiver for methods
@@ -233,24 +251,24 @@ def _changed_source(root: Path) -> list[Path]:
     ]
 
 
-def _explicit_files(existing: list[Path]) -> list[Path]:
+def _explicit_files(existing: list[Path], rule: SkipRule) -> list[Path]:
     files: list[Path] = []
     for path in existing:
         if path.is_dir():
-            files.extend(iter_source_files([path]))
+            files.extend(iter_source_files([path], rule))
         elif language_of(path) is not None:
             files.append(path)
     return files
 
 
-def _selected(options: Options, root: Path, existing: list[Path]) -> list[Path]:
+def _selected(options: Options, root: Path, existing: list[Path], rule: SkipRule) -> list[Path]:
     if options.changed:
         return _changed_source(root)
     if options.source_roots:
-        return iter_source_files([(root / path).resolve() for path in options.source_roots])
+        return iter_source_files([(root / path).resolve() for path in options.source_roots], rule)
     if existing:
-        return _explicit_files(existing)
-    return iter_source_files([root])
+        return _explicit_files(existing, rule)
+    return iter_source_files([root], rule)
 
 
 def _apply_filters(files: list[Path], filters: list[str]) -> list[Path]:
@@ -259,11 +277,30 @@ def _apply_filters(files: list[Path], filters: list[str]) -> list[Path]:
     return [path for path in files if any(item in path.as_posix() for item in filters)]
 
 
-def select_files(options: Options) -> list[Path]:
+def select_files(options: Options, rule: SkipRule | None = None) -> list[Path]:
     root = options.project_root.resolve()
+    rule = rule or SkipRule.for_project(root)
     existing, filters = _positionals(root, options.positionals)
-    files = _apply_filters(_selected(options, root, existing), filters)
+    files = _apply_filters(_selected(options, root, existing, rule), filters)
     return sorted({path.resolve() for path in files}, key=lambda path: path.as_posix())
+
+
+def _warn_unconfirmed(root: Path, skipped: set[Path]) -> None:
+    if not skipped:
+        return
+    names = ", ".join(sorted(path.relative_to(root).as_posix() for path in skipped))
+    print(
+        f"WARNING: source files skipped by directory name and not scored: {names}. "
+        "Name a directory to score it.",
+        file=sys.stderr,
+    )
+
+
+def _discover(options: Options, root: Path) -> list[Path]:
+    rule = SkipRule.for_project(root)
+    files = select_files(options, rule)
+    _warn_unconfirmed(root, rule.unconfirmed)
+    return files
 
 
 def _show_help(options: Options) -> int:
@@ -297,6 +334,19 @@ def _require_bound_sources(root: Path, files: list[Path]) -> None:
         raise CoverageIntegrityError('Selected sources are excluded from receipt inputs.')
 
 
+def _verified_bundle(root: Path):
+    """Coverage for a strict run. Swift packages below the root stay unscored."""
+
+    bundle = load_bundle(root)
+    bundle.unverified_swift = tuple(unverified_swift_packages(root))
+    for package in bundle.unverified_swift:
+        print(
+            f"Swift package {package} is not at --root; its coverage is not verified and its functions are N/A.",
+            file=sys.stderr,
+        )
+    return bundle
+
+
 def _coverage_bundle(options: Options, root: Path, files: list[Path]):
     if options.no_coverage:
         return None
@@ -310,7 +360,7 @@ def _coverage_bundle(options: Options, root: Path, files: list[Path]):
         _require_internal_sources(root, files)
         verify(root)
     _require_bound_sources(root, files)
-    return load_bundle(root)
+    return _verified_bundle(root)
 
 def _threshold_status(options: Options, entries) -> int:
     if options.threshold is None:
@@ -356,7 +406,7 @@ def run(argv: list[str] | None = None) -> int:
         return _show_help(options)
     root = options.project_root.resolve()
     try:
-        return _run_selection(options, root, select_files(options))
+        return _run_selection(options, root, _discover(options, root))
     except GitError as exc:
         print(str(exc), file=sys.stderr)
         return exc.code

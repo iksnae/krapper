@@ -31,7 +31,7 @@ For multiple modules, keep reports under the analyzed root with unambiguous sour
 
 ## Swift packages
 
-Strict mode supports one Swift package at `--root`. Your coverage command must produce:
+Strict mode verifies one Swift package, at `--root`. A Swift package below the root does not block the run: Krapper names it on stderr, leaves its functions N/A even when a report covers them, and scores the other languages. Those N/A entries fail a `--threshold` run unless you limit the run to other paths. For the package at `--root`, your coverage command must produce:
 
 - `target/coverage/swift-package.json`: output of `swift package describe --type json`.
 - `target/coverage/swift/*.json`: LLVM exports containing test-source records from **every declared test target**, with paths inside this checkout.
@@ -45,8 +45,9 @@ The Swift reader was adapted from [felipearpa's upstream contribution](https://g
 - Receipts detect accidental stale or mixed evidence, not deliberate forgery, bad assertions, or changes to external toolchains/dependencies. Trust the command you run. Do not recursively invoke strict Krapper inside that command before its receipt exists.
 - `--allow-unverified-coverage` warns and permits exploratory scoring of old reports. It cannot be combined with `--threshold` or `--coverage-command`; stale merged reports can inflate coverage.
 - Svelte components are scored through their top-level `<script>` blocks only. Markup (`{#if}` blocks, inline handlers) and callbacks passed to `$effect`, `$derived.by` or `$:` statements have no entry. Instance-script functions are covered only when a test mounts the component.
-- Unsupported files and top-level code without a function entry are not scored. Overloads can share namespace/name keys in EDN output.
+- Unsupported files and top-level code without a function entry are not scored. Functions can share `:namespace` and `:name` in `.metrics/crap.edn` (overloads, build-tagged variants, sibling files of one package); `:file` (relative to `--root`) and `:line` tell them apart within a snapshot. `:line` moves when the file is edited, so it locates a function and does not identify it across snapshots.
 - Test/build/dependency paths are excluded by default; `krapper --help` lists the rules. Explicitly naming a test file includes it.
+- Directories named `build`, `coverage`, `dist`, `out` or `target` are skipped as build output only when git ignores them or they sit directly under the project root; elsewhere they are source. Add nested output directories to `.gitignore`, or they are scored and bound into the receipt. Outside a git checkout these names are skipped at any depth. Krapper warns when a directory skipped by name alone holds source files. Git's answer stops at submodules and nested repositories: an output directory inside one is scored unless the outer repository ignores it.
 - Raw Python parser/coverage APIs do not enforce provenance. Only the CLI does.
 
 [Back to usage](../README.md)

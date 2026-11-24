@@ -95,3 +95,29 @@ def test_edn_writes_nil_for_missing_coverage():
     text = render_edn([entry(coverage=None, crap=None)])
     assert ":coverage nil" in text
     assert ":crap nil" in text
+
+
+def test_edn_tells_same_named_functions_apart_by_file_and_line():
+    text = render_edn(
+        [
+            entry(name="Open", namespace="demo", path="store/open_linux.go", line=12),
+            entry(name="Open", namespace="demo", path="store/open_darwin.go", line=9),
+        ]
+    )
+    first, second = text.splitlines()[1:3]
+    assert first.endswith(':file "store/open_linux.go", :line 12}')
+    assert second.endswith(':file "store/open_darwin.go", :line 9}')
+    assert first.index(":crap") < first.index(":file") < first.index(":line")
+
+
+def test_edn_file_never_records_where_the_checkout_lives(tmp_path):
+    root = tmp_path / "work" / "project"
+    outside = tmp_path / "work" / "shared" / "util.go"
+    text = render_edn([entry(path=str(outside), line=3), entry(path="pkg\\win.go", line=1)], root)
+    assert ':file "../shared/util.go", :line 3' in text
+    assert ':file "pkg/win.go", :line 1' in text
+    assert str(tmp_path) not in text
+
+
+def test_edn_line_is_nil_when_the_reader_recorded_none():
+    assert ":line nil" in render_edn([entry()])

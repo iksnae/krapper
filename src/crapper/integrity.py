@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from tempfile import NamedTemporaryFile
 from pathlib import Path
 
-from crapper.discover import SKIP_DIRS
+from crapper.discover import SkipRule
 
 RECEIPT = Path('.metrics/coverage-receipt.json')
 DESCRIPTION = Path('target/coverage/swift-package.json')
@@ -44,10 +44,12 @@ def _is_input_file(path: Path, reports: set[Path]) -> bool:
 
 def inputs(root: Path) -> dict[str, str]:
     """Bind source, tests, manifests and configuration, not generated output."""
+    root = root.resolve()
+    rule = SkipRule.for_project(root)
     reports = set(report_paths(root))
     paths = []
     for folder, dirs, names in os.walk(root):
-        dirs[:] = [d for d in dirs if d not in SKIP_DIRS]
+        dirs[:] = [d for d in dirs if not rule.skips(Path(folder), d)]
         for name in names:
             path = Path(folder) / name
             if _is_input_file(path, reports):
@@ -71,9 +73,7 @@ def _report_locations(root: Path, reports: list[Path]) -> None:
             _validate_lcov_sources(root, report)
 
 
-def _swift_test_targets(root: Path, packages: list[str]) -> list[dict]:
-    if packages != ['Package.swift']:
-        raise CoverageIntegrityError('Strict Swift coverage currently requires one package at --root.')
+def _swift_test_targets(root: Path) -> list[dict]:
     description = json.loads((root / DESCRIPTION).read_text())
     targets = [target for target in description['targets'] if target['type'] == 'test']
     if not targets:
@@ -112,11 +112,24 @@ def _represented_targets(root: Path, targets: list[dict], names: set[Path]) -> N
             raise CoverageIntegrityError(f'Swift export omits test target {target["name"]}.')
 
 
+def _swift_packages(root: Path) -> list[str]:
+    return [p for p in inputs(root) if Path(p).name == 'Package.swift']
+
+
+def unverified_swift_packages(root: Path) -> list[str]:
+    """Directories of Swift packages below the root.
+
+    Completeness is checked only for a package at the root. Coverage of a
+    nested package cannot be shown to represent its test targets, so its
+    functions stay unscored in strict runs.
+    """
+    return sorted(Path(p).parent.as_posix() for p in _swift_packages(root) if p != 'Package.swift')
+
+
 def _swift_complete(root: Path) -> None:
-    packages = [p for p in inputs(root) if Path(p).name == 'Package.swift']
-    if not packages:
+    if 'Package.swift' not in _swift_packages(root):
         return
-    targets = _swift_test_targets(root, packages)
+    targets = _swift_test_targets(root)
     exports = list((root / 'target/coverage/swift').glob('*.json'))
     if not exports:
         raise CoverageIntegrityError('Strict Swift coverage requires LLVM JSON exports, not LCOV alone.')
