@@ -7,10 +7,10 @@ Find complex, under-tested functions in Swift, Go, Rust and TypeScript. Clojure,
 Install with [uv](https://docs.astral.sh/uv/). Krapper needs Python 3.11+; this command selects Python 3.12:
 
 ```sh
-uv tool install --python 3.12 https://github.com/iksnae/krapper/releases/download/v0.2.0/krapper-0.2.0-py3-none-any.whl
+uv tool install --python 3.12 https://github.com/iksnae/krapper/releases/download/v0.2.1/krapper-0.2.1-py3-none-any.whl
 ```
 
-Add `--reinstall` to upgrade an existing installation. [Release downloads](https://github.com/iksnae/krapper/releases/tag/v0.2.0) include checksums.
+Add `--reinstall` to upgrade an existing installation. [Release downloads](https://github.com/iksnae/krapper/releases/tag/v0.2.1) include checksums.
 
 ## Use
 
