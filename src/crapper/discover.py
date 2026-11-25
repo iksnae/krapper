@@ -118,8 +118,9 @@ def ignored_directories(root: Path) -> frozenset[Path] | None:
 class SkipRule:
     """Which directories a walk of one project leaves out.
 
-    `ALWAYS_SKIP_DIRS` are left out at any depth. `OUTPUT_DIRS` are left out as
-    build output: when git ignores them, or directly under the project root.
+    `ALWAYS_SKIP_DIRS` are left out at any depth, and so is every directory git
+    ignores whole, whatever its name. `OUTPUT_DIRS` are also left out directly
+    under the project root, or below an ignored directory named as a path.
     Anywhere else such a name is a source package. Outside a git checkout
     nothing tells the two apart, and the name is left out at any depth.
     """
@@ -139,12 +140,17 @@ class SkipRule:
             return False
         return any(candidate in self.ignored for candidate in (path, *path.parents))
 
+    def git_ignores(self, path: Path) -> bool:
+        return self.ignored is not None and path in self.ignored
+
     def skips(self, directory: Path, name: str) -> bool:
-        if name in ALWAYS_SKIP_DIRS:
+        path = directory / name
+        if name in ALWAYS_SKIP_DIRS or self.git_ignores(path):
             return True
-        if name not in OUTPUT_DIRS:
-            return False
-        return self.ignored is None or directory == self.root or self.confirmed_output(directory / name)
+        return name in OUTPUT_DIRS and self._skips_output(directory, path)
+
+    def _skips_output(self, directory: Path, path: Path) -> bool:
+        return self.ignored is None or directory == self.root or self.confirmed_output(path)
 
     def note_skipped(self, path: Path) -> None:
         if path.name in OUTPUT_DIRS and not self.confirmed_output(path) and _holds_source(path):

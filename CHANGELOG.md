@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.3.1] - 2026-11-25
+
+### Fixed
+
+- In a git checkout, every directory git ignores is skipped by discovery and by the coverage receipt, not only directories named `build`, `coverage`, `dist`, `out` or `target`. Generated code in an ignored directory (for example wasm-bindgen output) is no longer scored, and a `--coverage-command` can write into it without failing integrity. Naming an ignored directory as a path still scores all of it.
+
+### Migration notes
+
+Entries from git-ignored directories disappear from `.metrics/crap.edn`, which can change a `--threshold` gate result. Receipts sealed by 0.3.0 can fail verification, because ignored files are no longer bound inputs. Re-run your coverage command.
+
 ## [0.3.0] - 2026-11-24
 
 ### Added

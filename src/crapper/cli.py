@@ -85,6 +85,9 @@ Arguments:
 With no paths, source files under the project root are analyzed. Directories
 named {_SKIPPED_DIRS} are skipped at any depth, as are {_TEST_PATTERNS}.
 
+In a git checkout, every directory git ignores is skipped, whatever its name.
+Name an ignored directory as a path to score it.
+
 Directories named {_OUTPUT_DIRS} are skipped as build output
 only when git ignores them or they sit directly under the project root.
 Anywhere else they are source and are scored. Outside a git checkout they are
