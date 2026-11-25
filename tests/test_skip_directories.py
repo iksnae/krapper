@@ -141,3 +141,4 @@ def test_help_documents_the_rule(capsys):
     out = capsys.readouterr().out
     assert "build, coverage, dist, out, target are skipped as build output" in out
     assert "only when git ignores them or they sit directly under the project root" in out
+    assert "every directory git ignores is skipped, whatever its name" in out
